@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Временные дебаг-файлы и артефакты RenForge (не для коммита)
+_*.txt
+_*.py
+*.stats.json
+renforge_ast.json
+renforge_native.json

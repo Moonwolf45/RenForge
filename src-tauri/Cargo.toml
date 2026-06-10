@@ -1,15 +1,23 @@
 [package]
 name = "renforge"
-version = "1.1.0"
+version = "1.2.0"
 description = "A standalone tool for modding and translating Ren'Py visual novels"
 authors = ["foulnike"]
 edition = "2021"
 repository = "https://github.com/foulnike/RenForge"
 license = "GPL-3.0"
+# Основное приложение по умолчанию: renforge_cli — это тестовый headless-бинарник,
+# поэтому `cargo run`/`tauri dev` должны запускать GUI-приложение, а не CLI.
+default-run = "renforge"
 
 [lib]
 name = "renforge_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
+
+# renforge_cli вынесен в отдельный crate (cli/): Tauri бандлит ВСЕ бинарники пакета
+# приложения, поэтому dev-CLI не должен быть бинарником этого пакета. target общий (workspace).
+[workspace]
+members = ["cli"]
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
@@ -21,6 +29,11 @@ tauri-plugin-dialog = "2.0.0"
 tauri-plugin-shell = "2.0.0"
 walkdir = "2.5"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
+ttf-parser = "0.20"
+strsim = "0.11"
+reqwest = { version = "0.12", features = ["json"] }
+fs2 = "0.4"

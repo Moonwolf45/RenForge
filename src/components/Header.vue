@@ -3,10 +3,10 @@
     <!-- LEFT SECTION -->
     <div class="header-section">
       <template v-if="['dashboard', 'gallery', 'audio'].includes(currentMode)">
-        <div class="logo" style="margin-right: 15px;">RenForge <span class="version">v1.1</span></div>
+        <div class="logo" style="margin-right: 15px; cursor: pointer; user-select: none;" @click="onLogoClick"><img :src="appLogo" class="logo-img" alt="" /><span class="logo-text"><span class="logo-ren">Ren</span><span class="logo-forge">Forge</span><sup class="version">1.2</sup></span></div>
         
         <div class="popover-wrapper">
-          <button class="btn btn-secondary" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}">{{ t('settings') }}</button>
+          <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}" :title="t('settings')"><Icon name="gear" :size="18" /></button>
           <div v-if="activePopover === 'settings'" class="popover-menu">
             <div class="setting-row">
                 <label>{{ t('ui_theme') }}</label>
@@ -17,16 +17,25 @@
                 </select>
             </div>
             <div class="setting-row">
+                <label>{{ t('ui_accent') }}</label>
+                <AccentPicker />
+            </div>
+            <div class="setting-row">
                 <label>{{ t('ui_lang') }}</label>
                 <select class="settings-select" v-model="uiLang" @change="saveSettings">
-                    <option value="ru">RU</option>
-                    <option value="en">EN</option>
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                    <option value="ja">日本語</option>
+                    <option value="es">Español</option>
+                    <option value="pt">Português</option>
                 </select>
             </div>
             <div class="setting-row">
-                <label>{{ t('target_lang') }}</label>
+                <label>{{ t('translate_to') }}</label>
                 <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
                   <select class="settings-select" v-model="targetLangSelect" @change="onTargetLangSelect">
+                      <option value="">{{ t('lang_not_set') }}</option>
                       <option value="russian">Русский (russian)</option>
                       <option value="english">English (english)</option>
                       <option value="spanish">Español (spanish)</option>
@@ -37,11 +46,29 @@
                   <input v-if="targetLangSelect === 'custom'" type="text" class="settings-select" v-model="targetLang" @change="saveSettings" :placeholder="t('custom_lang_placeholder')" style="width: 100%; box-sizing: border-box;" />
                 </div>
             </div>
+            <div class="setting-row" v-if="projectPath">
+                <label>{{ t('source_lang') }}</label>
+                <select class="settings-select" v-model="sourceLang" @change="saveSettings">
+                    <option value="">{{ t('lang_not_set') }}</option>
+                    <option value="original">original</option>
+                    <option v-for="lang in availableLanguages.filter(l => l !== 'original')" :key="lang" :value="lang">{{ lang }}</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>{{ t('target_script') }}</label>
+                <select class="settings-select" v-model="targetScript" @change="saveSettings">
+                    <option value="auto">{{ t('script_auto') }}</option>
+                    <option v-for="code in SCRIPT_CODES" :key="code" :value="code">{{ t('script_' + code) }}</option>
+                </select>
+            </div>
+            <div class="setting-row" style="border-bottom:none;">
+              <button class="dropdown-item-btn" style="width:100%; display:inline-flex; align-items:center; gap:8px;" @click="showAboutModal = true; activePopover = null"><Icon name="info" :size="15" /> {{ t('about_title') }}</button>
+            </div>
           </div>
         </div>
         
         <div class="popover-wrapper">
-          <button class="btn btn-secondary" @click="togglePopover('help')" :class="{active: activePopover === 'help'}">{{ t('help_title') }}</button>
+          <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('help')" :class="{active: activePopover === 'help'}" :title="t('help_title')"><Icon name="help" :size="18" /></button>
           <div v-if="activePopover === 'help'" class="popover-menu" style="width: 450px;">
             <template v-if="currentMode === 'dashboard'">
               <ol style="margin: 0; padding-left: 15px; line-height: 1.6; font-size: 13px;">
@@ -49,8 +76,11 @@
                 <li style="margin-bottom: 10px;" v-html="t('help_step2')"></li>
                 <li style="margin-bottom: 10px;" v-html="t('help_step3')"></li>
                 <li style="margin-bottom: 10px;" v-html="t('help_step4')"></li>
-                <li v-html="t('help_step5')"></li>
+                <li style="margin-bottom: 10px;" v-html="t('help_step5')"></li>
+                <li style="margin-bottom: 10px;" v-html="t('help_step6')"></li>
+                <li v-html="t('help_step7')"></li>
               </ol>
+              <p class="help-note" style="margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--border, rgba(128,128,128,0.25)); font-size: 12px; line-height: 1.5; opacity: 0.85;" v-html="t('help_note_langselect')"></p>
             </template>
             <template v-else-if="currentMode === 'gallery'">
               <p style="font-size: 13px; line-height: 1.5; margin: 0;">{{ t('help_img_desc') }}</p>
@@ -62,11 +92,13 @@
         </div>
       </template>
 
-      <template v-else-if="['editor', 'fallback-editor'].includes(currentMode)">
+      <template v-else-if="currentMode === 'editor'">
         <button class="btn btn-secondary" @click="closeEditor">{{ t('back') }}</button>
-        <span class="header-filename" :title="currentMode === 'editor' ? currentFilePath : fallbackRelPath">
-          {{ getFileName(currentMode === 'editor' ? currentFilePath : fallbackRelPath) }}
-        </span>
+        <button v-if="currentFilePath !== MANUAL_FILE" class="header-filename header-filename-btn" :title="t('source_view_hint')" @click="showSourceModal = true">
+          <Icon name="file" :size="14" />
+          {{ getFileName(currentFilePath) }}
+        </button>
+        <span v-else class="header-filename"><Icon name="file" :size="14" /> {{ t('manual_strings_file') }}</span>
       </template>
     </div>
 
@@ -81,7 +113,7 @@
       </template>
 
       <template v-else-if="currentMode === 'editor'">
-        <div class="btn-group" v-if="parsedBlocks.length > 0 && !showRawView && !isEditorLoading">
+        <div class="btn-group" v-if="parsedBlocks.length > 0 && !isEditorLoading">
           <button class="group-btn" @click="isAiModalOpen = true">{{ t('ai_assistant') }}</button>
           
           <div class="popover-wrapper" style="display: inline-flex;">
@@ -89,6 +121,7 @@
             <div v-if="activePopover === 'export'" class="popover-menu popover-menu-sm">
               <button class="dropdown-item-btn" @click="exportCSV">Export .CSV</button>
               <button class="dropdown-item-btn" @click="exportJSON">Export .JSON</button>
+              <button class="dropdown-item-btn" @click="exportPO">Export .PO</button>
             </div>
           </div>
 
@@ -97,10 +130,9 @@
             <div v-if="activePopover === 'import'" class="popover-menu popover-menu-sm">
               <button class="dropdown-item-btn" @click="importCSV">Import .CSV</button>
               <button class="dropdown-item-btn" @click="importJSON">Import .JSON</button>
+              <button class="dropdown-item-btn" @click="importPO">Import .PO</button>
             </div>
           </div>
-
-          <button :class="['group-btn', { active: showRawView }]" @click="showRawView = !showRawView">{{ t('raw_code') }}</button>
         </div>
       </template>
     </div>
@@ -108,18 +140,17 @@
     <!-- RIGHT SECTION -->
     <div class="header-section right">
       <template v-if="['dashboard', 'gallery', 'audio'].includes(currentMode)">
-        <label class="toggle-hidden" v-if="projectPath && hiddenFiles.length > 0 && currentMode === 'dashboard'">
-          <input type="checkbox" v-model="showHidden">
-          {{ t('show_hidden') }} ({{ hiddenFiles.length }})
-        </label>
         <button class="btn btn-primary" @click="openProjectFolder">{{ t('select_folder') }}</button>
       </template>
       
       <template v-else-if="currentMode === 'editor'">
-        <button v-if="hasErrors && !showRawView && !isEditorLoading" class="btn btn-outline error-jump-btn" @click="jumpToNextError" :title="t('next_error')">{{ t('next_error') }}</button>
+        <button v-if="hasReview && !isEditorLoading" class="btn btn-outline review-jump-btn" @click="jumpToNextReview" :title="t('next_review')">{{ t('next_review') }} ({{ reviewCount }})</button>
+        <button v-if="hasErrors && !isEditorLoading" class="btn btn-outline error-jump-btn" @click="jumpToNextError" :title="t('next_error')">{{ t('next_error') }}</button>
         
-        <div class="popover-wrapper" v-if="!showRawView && !isEditorLoading">
-          <button class="btn btn-secondary" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}">{{ t('settings') }}</button>
+        <button v-if="!isEditorLoading" class="btn btn-secondary header-add-string" style="display:inline-flex; align-items:center; justify-content:center;" @click="showAddStringModal = true" :title="t('add_string')"><Icon name="plus" :size="18" /></button>
+
+        <div class="popover-wrapper" v-if="!isEditorLoading">
+          <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}" :title="t('settings')"><Icon name="gear" :size="18" /></button>
           <div v-if="activePopover === 'settings'" class="popover-menu popover-right">
             <div class="setting-row">
                 <label>{{ t('ui_theme') }}</label>
@@ -130,78 +161,138 @@
                 </select>
             </div>
             <div class="setting-row">
+                <label>{{ t('ui_accent') }}</label>
+                <AccentPicker />
+            </div>
+            <div class="setting-row">
                 <label>{{ t('ui_lang') }}</label>
                 <select class="settings-select" v-model="uiLang" @change="saveSettings">
-                    <option value="ru">RU</option>
-                    <option value="en">EN</option>
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                    <option value="ja">日本語</option>
+                    <option value="es">Español</option>
+                    <option value="pt">Português</option>
                 </select>
+            </div>
+            <div class="setting-row" style="border-bottom:none;">
+              <button class="dropdown-item-btn" style="width:100%; display:inline-flex; align-items:center; gap:8px;" @click="showAboutModal = true; activePopover = null"><Icon name="info" :size="15" /> {{ t('about_title') }}</button>
             </div>
           </div>
         </div>
         
-        <div class="popover-wrapper" v-if="!showRawView && !isEditorLoading">
-          <button class="btn btn-secondary" @click="togglePopover('help')" :class="{active: activePopover === 'help'}">{{ t('help_title') }}</button>
+        <div class="popover-wrapper" v-if="!isEditorLoading">
+          <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('help')" :class="{active: activePopover === 'help'}" :title="t('help_title')"><Icon name="help" :size="18" /></button>
           <div v-if="activePopover === 'help'" class="popover-menu popover-right" style="width: 450px;">
             <ol style="margin: 0; padding-left: 15px; line-height: 1.6; font-size: 13px;">
               <li style="margin-bottom: 10px;" v-html="t('help_editor_1')"></li>
               <li style="margin-bottom: 10px;" v-html="t('help_editor_2')"></li>
-              <li v-html="t('help_editor_3')"></li>
+              <li style="margin-bottom: 10px;" v-html="t('help_editor_3')"></li>
+              <li style="margin-bottom: 10px;" v-html="t('help_editor_4')"></li>
+              <li style="margin-bottom: 10px;" v-html="t('help_editor_5')"></li>
+              <li style="margin-bottom: 10px;" v-html="t('help_editor_6')"></li>
+              <li v-html="t('help_editor_7')"></li>
             </ol>
           </div>
         </div>
 
         <div style="display: flex; align-items: center; gap: 15px; margin-left: 5px;" v-if="!isEditorLoading">
-          <button v-if="!showRawView && parsedBlocks.length > 0" class="btn btn-primary" @click="saveFile">{{ t('save') }}</button>
+          <span v-if="editorDirty" class="save-state save-dirty">● {{ t('unsaved_changes') }}</span>
+          <span v-else-if="lastSavedAt" class="save-state save-saved">{{ t('saved_at') }} {{ lastSavedAt }}</span>
+          <button v-if="parsedBlocks.length > 0" class="btn btn-primary" @click="saveFile">{{ t('save') }}</button>
         </div>
-      </template>
-
-      <template v-else-if="currentMode === 'fallback-editor'">
-        <div class="btn-group" style="margin-right: 15px;">
-          <button class="group-btn" @click="autoSelectFallback">{{ t('fallback_auto_btn') }}</button>
-          <button class="group-btn" @click="selectAllFallback">{{ t('select_all') }}</button>
-          <button class="group-btn" @click="clearAllFallback">{{ t('clear_all') }}</button>
-          
-          <div class="popover-wrapper" style="display: inline-flex;">
-            <button class="group-btn" @click="togglePopover('help')" :class="{active: activePopover === 'help'}">{{ t('help_title') }} ▾</button>
-            <div v-if="activePopover === 'help'" class="popover-menu popover-right" style="width: 400px; text-align: left; white-space: normal;">
-              <strong>{{ t('fallback_help_title') }}</strong>
-              <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 5px 0;">{{ t('fallback_help_1') }}</p>
-              <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 5px 0;">{{ t('fallback_help_2') }}</p>
-              <p style="font-size: 13px; color: var(--error-text); line-height: 1.5; margin: 5px 0; font-weight: bold;">{{ t('fallback_help_3') }}</p>
-              <hr style="border: none; border-top: 1px solid var(--border-main); margin: 8px 0;" />
-              <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin: 0;">{{ t('fallback_help_4') }}</p>
-            </div>
-          </div>
-        </div>
-        <button class="btn btn-primary" @click="generateFallbackFile" :disabled="isProcessing">{{ t('fallback_gen_btn') }}</button>
       </template>
     </div>
+    <Teleport to="body">
+      <div v-if="eggDrops.length" class="egg-rain">
+        <img v-for="d in eggDrops" :key="d.id" :src="appLogo" class="egg-drop"
+             :style="{ left: d.left + '%', width: d.size + 'px', animationDelay: d.delay + 's', animationDuration: d.dur + 's', '--rot': d.rot + 'deg' }" alt="" />
+      </div>
+    </Teleport>
   </header>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
-import { t } from '../locales.js';
+import { open, ask } from '@tauri-apps/plugin-dialog';
+import { t, SCRIPT_CODES } from '../locales.js';
+import Icon from './Icon.vue';
+import AccentPicker from './AccentPicker.vue';
+import appLogo from '../assets/app-logo.png';
 import { 
-  uiTheme, uiLang, targetLang, currentMode, activePopover, isAiModalOpen,
-  parsedBlocks, showRawView, isEditorLoading, currentFilePath, fallbackRelPath,
-  projectPath, hiddenFiles, isProcessing, loadProjectSettings, getFileName, showMsg, fallbackLines, showHidden
+  uiTheme, uiLang, targetLang, targetScript, sourceLang, currentMode, activePopover, isAiModalOpen,
+  parsedBlocks, isEditorLoading, currentFilePath, showSourceModal, showAddStringModal, MANUAL_FILE, showAboutModal,
+  projectPath, hiddenFiles, isProcessing, loadProjectSettings, getFileName, showMsg, showHidden,
+  availableLanguages, editorDirty, lastSavedAt, uiAccent, FUNNY_PROMPTS
 } from '../store.js';
-import { refreshProject, exportCSV, exportJSON, importCSV, importJSON, saveFile, getBlockStatus } from '../actions.js';
+import { refreshProject, exportCSV, exportJSON, importCSV, importJSON, exportPO, importPO, saveFile, getBlockStatus } from '../actions.js';
 
 const predefinedLangs =['russian', 'english', 'spanish', 'french', 'german'];
-const targetLangSelect = ref(predefinedLangs.includes(targetLang.value) ? targetLang.value : 'custom');
+const targetLangSelect = ref(targetLang.value === '' ? '' : (predefinedLangs.includes(targetLang.value) ? targetLang.value : 'custom'));
+// Синхронизируем выпадашку при смене проекта (loadProjectSettings меняет targetLang извне)
+watch(targetLang, (v) => {
+  const desired = v === '' ? '' : (predefinedLangs.includes(v) ? v : 'custom');
+  if (targetLangSelect.value !== desired) targetLangSelect.value = desired;
+});
 
 const hasErrors = computed(() => parsedBlocks.value.some(block => getBlockStatus(block) === 'error'));
+const reviewCount = computed(() => parsedBlocks.value.filter(block => getBlockStatus(block) === 'outdated').length);
+const hasReview = computed(() => reviewCount.value > 0);
+let reviewIdx = 0;
 
 function togglePopover(name) { activePopover.value = activePopover.value === name ? null : name; }
 
 function saveSettings() {
   localStorage.setItem('renforge_ui_lang', uiLang.value);
   localStorage.setItem('renforge_target_lang', targetLang.value);
+  localStorage.setItem('renforge_source_lang', sourceLang.value);
   localStorage.setItem('renforge_ui_theme', uiTheme.value);
+  localStorage.setItem('renforge_target_script', targetScript.value);
+  localStorage.setItem('renforge_ui_accent', uiAccent.value);
+}
+
+// --- Пасхалка: 30 кликов подряд по лого ---
+const eggDrops = ref([]);
+let logoClicks = 0;
+let lastLogoClickTs = 0;
+let lastFunnyIdx = -1;
+function onLogoClick() {
+  const now = Date.now();
+  if (now - lastLogoClickTs > 2000) logoClicks = 0; // не подряд — сброс
+  lastLogoClickTs = now;
+  logoClicks++;
+  if (logoClicks >= 30) { logoClicks = 0; triggerEasterEgg(); }
+}
+function triggerEasterEgg() {
+  // 1) Кувырок всего окна
+  const app = document.querySelector('.app-container');
+  if (app) { app.classList.add('rf-barrel'); setTimeout(() => app.classList.remove('rf-barrel'), 1200); }
+  // 2) Ливень из мини-девочек
+  const drops = [];
+  for (let i = 0; i < 30; i++) {
+    drops.push({
+      id: i + '-' + Date.now(),
+      left: Math.random() * 100,
+      size: 24 + Math.round(Math.random() * 40),
+      delay: +(Math.random() * 0.9).toFixed(2),
+      dur: +(2.4 + Math.random() * 2.2).toFixed(2),
+      rot: Math.round(Math.random() * 1080 - 540),
+    });
+  }
+  eggDrops.value = drops;
+  setTimeout(() => { eggDrops.value = []; }, 6500);
+  // 3) Тихо подменяем системный промпт нейросети на случайный смешной
+  //    (не повторяем предыдущий, чтобы каждый раз было что-то новое).
+  //    Чинится кнопкой «Сбросить к стандарту» в AI-ассистенте.
+  let idx = Math.floor(Math.random() * FUNNY_PROMPTS.length);
+  if (FUNNY_PROMPTS.length > 1) {
+    while (idx === lastFunnyIdx) idx = Math.floor(Math.random() * FUNNY_PROMPTS.length);
+  }
+  lastFunnyIdx = idx;
+  localStorage.setItem('renforge_ollama_system', FUNNY_PROMPTS[idx]);
+  // 4) Ехидный тост
+  showMsg('success', t('egg_msg'), 5000);
 }
 
 function onTargetLangSelect() {
@@ -221,11 +312,15 @@ async function openProjectFolder() {
   } catch (e) { showMsg('error', `Error: ${e}`); }
 }
 
-function closeEditor() {
+async function closeEditor() {
+    if (editorDirty.value) {
+        const ok = await ask(t('confirm_leave_unsaved'), { title: t('unsaved_changes'), kind: 'warning' });
+        if (!ok) return;
+    }
     currentMode.value = 'dashboard';
-    showRawView.value = false;
     currentFilePath.value = '';
     parsedBlocks.value =[];
+    editorDirty.value = false;
 }
 
 function jumpToNextError() {
@@ -236,41 +331,13 @@ function jumpToNextError() {
     }
 }
 
-// Fallback logic
-function autoSelectFallback() {
-    if (confirm(t('fallback_auto_warn'))) {
-        fallbackLines.value.forEach(line => {
-            line.parts.forEach(part => { if (part.type === 'string' && part.canAuto) part.selected = true; });
-        });
-    }
-}
-function selectAllFallback() {
-    fallbackLines.value.forEach(line => {
-        line.parts.forEach(part => { if (part.type === 'string' && (part.canAuto || part.suspicious)) part.selected = true; });
-    });
-}
-function clearAllFallback() {
-    fallbackLines.value.forEach(line => {
-        line.parts.forEach(part => { if (part.type === 'string') part.selected = false; });
-    });
-}
-
-async function generateFallbackFile() {
-    const selectedSet = new Set();
-    fallbackLines.value.forEach(line => {
-        line.parts.forEach(part => { if (part.type === 'string' && part.selected && part.fullRaw) selectedSet.add(part.fullRaw); });
-    });
-    
-    try {
-        isProcessing.value = true;
-        await invoke('write_fallback_file', {
-            projectPath: projectPath.value, targetLang: targetLang.value,
-            origRelPath: fallbackRelPath.value, strings: Array.from(selectedSet)
-        });
-        showMsg('success', t('msg_fallback_saved'));
-        currentMode.value = 'dashboard';
-        await refreshProject();
-    } catch(e) { showMsg('error', e.toString()); } 
-    finally { isProcessing.value = false; }
+function jumpToNextReview() {
+    const blocks = parsedBlocks.value.filter(b => getBlockStatus(b) === 'outdated');
+    if (!blocks.length) return;
+    if (reviewIdx >= blocks.length) reviewIdx = 0;
+    const b = blocks[reviewIdx];
+    reviewIdx++;
+    const el = document.getElementById('block-' + b.id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 </script>

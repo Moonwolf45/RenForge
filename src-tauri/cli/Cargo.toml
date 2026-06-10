@@ -1,0 +1,15 @@
+[package]
+name = "renforge_cli"
+version = "1.2.0"
+edition = "2021"
+description = "Headless dev/QA CLI over the RenForge backend (not shipped)."
+license = "GPL-3.0"
+
+[[bin]]
+name = "renforge_cli"
+path = "src/main.rs"
+
+[dependencies]
+renforge_lib = { path = "..", package = "renforge" }
+serde_json = "1.0"
+rusqlite = { version = "0.31.0", features = ["bundled"] }

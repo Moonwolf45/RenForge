@@ -8,11 +8,11 @@
               </div>
               <div class="sidebar-item media-folder-item" :class="{ active: audioSelectedFolder === '/', 'is-faded': hiddenFolders.includes('/') }" @click="audioSelectedFolder = '/'">
                   <span class="folder-name">{{ t('root_folder') }}</span>
-                  <button class="icon-text-btn folder-eye-btn" @click.stop="toggleHideFolder('/')" :title="t('hide_folder_hint')">[{{ hiddenFolders.includes('/') ? t('btn_show') : t('btn_hide') }}]</button>
+                  <button class="icon-text-btn folder-eye-btn" @click.stop="toggleHideFolder('/')" :title="hiddenFolders.includes('/') ? t('btn_show') : t('btn_hide')"><Icon :name="hiddenFolders.includes('/') ? 'eye-off' : 'eye'" /></button>
               </div>
               <div class="sidebar-item media-folder-item" v-for="f in audioFolders" :key="f" :class="{ active: audioSelectedFolder === f, 'is-faded': hiddenFolders.includes(f) }" @click="audioSelectedFolder = f">
                   <span class="folder-name" :title="f">{{ f }}</span>
-                  <button class="icon-text-btn folder-eye-btn" @click.stop="toggleHideFolder(f)" :title="t('hide_folder_hint')">[{{ hiddenFolders.includes(f) ? t('btn_show') : t('btn_hide') }}]</button>
+                  <button class="icon-text-btn folder-eye-btn" @click.stop="toggleHideFolder(f)" :title="hiddenFolders.includes(f) ? t('btn_show') : t('btn_hide')"><Icon :name="hiddenFolders.includes(f) ? 'eye-off' : 'eye'" /></button>
               </div>
           </div>
       </aside>
@@ -35,9 +35,9 @@
 
           <div v-else class="gallery-scroll-container">
               <div class="gallery-grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
-                  <div class="gallery-card" v-for="aud in paginatedAudio" :key="aud.rel_path" style="min-height: auto;" :class="{ 'is-hidden': hiddenAudio.includes(aud.rel_path) }">
+                  <div class="gallery-card" v-for="aud in paginatedAudio" :key="aud.rel_path" style="min-height: auto;" :data-relpath="aud.rel_path" :class="{ 'is-hidden': hiddenAudio.includes(aud.rel_path), 'drag-over': dragOverPath === aud.rel_path }">
                       <div style="padding: 15px 15px 10px; background: var(--bg-panel); border-bottom: 1px solid var(--border-main); text-align: center; position: relative;">
-                          <audio controls controlsList="nodownload" :src="getAudioSrc(aud)" style="width: 100%; height: 36px; outline: none;"></audio>
+                          <audio controls controlsList="nodownload" :src="getAudioSrc(aud)" @play="onAudioPlay" style="width: 100%; height: 36px; outline: none;"></audio>
                           <div v-if="aud.is_translated" class="status-badge status-done img-badge" style="position: absolute; top: 10px; right: 10px; margin: 0;">{{ t('status_translated') }}</div>
                       </div>
                       <div style="padding: 12px; background: var(--bg-app); border-bottom: 1px solid var(--border-main); flex: 1; display: flex; flex-direction: column;">
@@ -45,19 +45,19 @@
                               <div style="font-size: 13px; font-weight: 500; color: var(--text-main); font-style: italic; background: var(--bg-base); padding: 8px 10px; border-radius: 6px; border-left: 3px solid var(--accent); line-height: 1.4;">
                                   {{ aud.mapped_text }}
                               </div>
-                              <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">📄 {{ aud.mapped_script }}</div>
+                              <div style="font-size: 11px; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; gap: 5px; min-width: 0;" :title="aud.mapped_script"><Icon name="file" :size="12" /> <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ aud.mapped_script }}</span></div>
                           </div>
                           <div v-else style="display: flex; align-items: center; justify-content: center; height: 100%; opacity: 0.6;">
-                              <span style="font-size: 12px; color: var(--text-muted); font-style: italic;">Текст не привязан (Музыка / SFX)</span>
+                              <span style="font-size: 12px; color: var(--text-muted); font-style: italic;">{{ t('audio_unmapped') }}</span>
                           </div>
                       </div>
                       <div class="gallery-card-info" style="border-top: none;">
                           <div class="img-path" style="margin-bottom: 4px;" :title="aud.rel_path">{{ aud.rel_path }}</div>
-                          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                              <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" @click="importAudioDialog(aud)">{{ t('btn_translate') }} (Import)</button>
-                              <button class="icon-text-btn" @click="toggleHideAudio(aud.rel_path)">[{{ hiddenAudio.includes(aud.rel_path) ? t('btn_show') : t('btn_hide') }}]</button>
-                              <button v-if="aud.is_translated" class="icon-text-btn" style="color: var(--error-text); padding-right: 0;" @click="revertAudio(aud)">[{{ t('revert') }}]</button>
-                              <button v-else class="icon-text-btn" style="padding-right: 0;" @click="openImgFolder(aud.original_path)">[{{ t('open_folder') }}]</button>
+                          <div class="card-actions">
+                              <button class="icon-text-btn import-btn" @click="importAudioDialog(aud)" :title="`${t('btn_translate')} (Import)`"><Icon name="download" /></button>
+                              <button class="icon-text-btn" @click="toggleHideAudio(aud.rel_path)" :title="hiddenAudio.includes(aud.rel_path) ? t('btn_show') : t('btn_hide')"><Icon :name="hiddenAudio.includes(aud.rel_path) ? 'eye-off' : 'eye'" /></button>
+                              <button v-if="aud.is_translated" class="icon-text-btn" style="color: var(--error-text);" @click="revertAudio(aud)" :title="t('revert_audio')"><Icon name="undo" /></button>
+                              <button class="icon-text-btn" @click="openImgFolder(aud.original_path)" :title="t('open_folder')"><Icon name="folder" /></button>
                           </div>
                       </div>
                   </div>
@@ -78,11 +78,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { t } from '../locales.js';
+import Icon from './Icon.vue';
 import { projectPath, targetLang, hiddenAudio, hiddenFolders, showHiddenMedia, showMsg, getFolderFromPath } from '../store.js';
 
 const audioFiles = ref([]);
@@ -92,9 +94,56 @@ const audioCurrentPage = ref(1);
 const audioItemsPerPage = 100;
 const isAudioLoading = ref(false);
 
-watch([audioSearch, audioSelectedFolder], () => { audioCurrentPage.value = 1; });
+// --- Drag&drop аудиофайлов из ОС ---
+const dragOverPath = ref(null);
+const AUDIO_EXTS = ['ogg', 'mp3', 'wav'];
+let unlistenDrop = null;
 
-onMounted(() => { loadAudio(); });
+function cardPathAtPoint(pos) {
+    if (!pos) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const el = document.elementFromPoint(pos.x / dpr, pos.y / dpr);
+    const card = el && el.closest ? el.closest('.gallery-card') : null;
+    return card ? card.getAttribute('data-relpath') : null;
+}
+
+async function importDroppedAudio(relPath, sourceFilePath) {
+    const aud = audioFiles.value.find(a => a.rel_path === relPath);
+    if (!aud) return;
+    const ext = (sourceFilePath.split('.').pop() || '').toLowerCase();
+    if (!AUDIO_EXTS.includes(ext)) {
+        showMsg('error', t('drop_not_audio'));
+        return;
+    }
+    try {
+        const translated_path = await invoke('import_localized_audio', {
+            projectPath: projectPath.value, targetLang: targetLang.value, relPath, sourceFilePath
+        });
+        aud.is_translated = true; aud.translated_path = translated_path;
+        showMsg('success', t('audio_copied'));
+    } catch (e) { showMsg('error', e.toString()); }
+}
+
+watch([audioSearch, audioSelectedFolder], () => { audioCurrentPage.value = 1; });
+// Перезагружаем список аудио при смене проекта/языка, даже если вкладка не переоткрывалась.
+watch([projectPath, targetLang], () => { loadAudio(); });
+
+onMounted(() => {
+    loadAudio();
+    getCurrentWebview().onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === 'drop') {
+            const relPath = cardPathAtPoint(p.position);
+            dragOverPath.value = null;
+            if (relPath && p.paths && p.paths.length) importDroppedAudio(relPath, p.paths[0]);
+        } else if (p.type === 'leave' || p.type === 'cancelled') {
+            dragOverPath.value = null;
+        } else {
+            dragOverPath.value = cardPathAtPoint(p.position);
+        }
+    }).then(u => { unlistenDrop = u; }).catch(() => {});
+});
+onUnmounted(() => { if (unlistenDrop) { unlistenDrop(); unlistenDrop = null; } });
 
 const audioFolders = computed(() => {
     const folders = new Set();
@@ -119,7 +168,13 @@ const filteredAudio = computed(() => {
     if (audioSelectedFolder.value) {
         result = audioSelectedFolder.value === '/' ? result.filter(aud => !aud.rel_path.includes('/')) : result.filter(aud => getFolderFromPath(aud.rel_path) === audioSelectedFolder.value);
     }
-    if (audioSearch.value) result = result.filter(a => a.rel_path.toLowerCase().includes(audioSearch.value.toLowerCase()));
+    if (audioSearch.value) {
+        const q = audioSearch.value.toLowerCase();
+        result = result.filter(a =>
+            a.rel_path.toLowerCase().includes(q) ||
+            (a.mapped_text && a.mapped_text.toLowerCase().includes(q))
+        );
+    }
     return result;
 });
 
@@ -139,6 +194,11 @@ function validateAudioPage() {
 function getAudioSrc(aud) {
     const path = aud.is_translated && aud.translated_path ? aud.translated_path : aud.original_path;
     return convertFileSrc(path);
+}
+
+// Одновременно играет только один плеер: при старте паузим все остальные
+function onAudioPlay(e) {
+    document.querySelectorAll('audio').forEach(a => { if (a !== e.target) a.pause(); });
 }
 
 function toggleHideFolder(folder) {

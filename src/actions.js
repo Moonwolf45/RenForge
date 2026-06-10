@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import { save, open } from '@tauri-apps/plugin-dialog';
+import { save, open, ask } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 import { 
-  projectPath, targetLang, isProcessing, projectFiles, charMap, fileStats, 
-  showMsg, currentMode, isEditorLoading, showRawView, currentFilePath, rawFileText, 
-  parsedBlocks, fallbackLines, fallbackRelPath, fallbackIsEditMode, hideTranslated 
+  projectPath, targetLang, sourceLang, isProcessing, projectFiles, charMap, fileStats, 
+  showMsg, currentMode, isEditorLoading, currentFilePath, 
+  parsedBlocks, hideTranslated, availableLanguages,
+  editorDirty, lastSavedAt, translationPairs, activePair, isExporting, MANUAL_FILE
 } from './store.js';
 import { t } from './locales.js';
 
@@ -13,127 +15,448 @@ export async function refreshProject() {
       projectFiles.value = await invoke('scan_project', { path: projectPath.value, targetLang: targetLang.value }); 
       charMap.value = await invoke('get_character_mapping', { projectPath: projectPath.value });
       fileStats.value = await invoke('get_translation_stats', { projectPath: projectPath.value });
+      // Языки-источники определяем сразу при открытии — селектор «Переводить с»
+      // доступен ДО извлечения (для loose-file игр; для .rpa — после распаковки).
+      try {
+          const langs = await invoke('discover_source_languages', { projectPath: projectPath.value });
+          if (langs && langs.length > 0) availableLanguages.value = langs;
+      } catch (e) { console.error('discover_source_languages failed:', e); }
+      await loadPairs();
   } 
   catch (e) { showMsg('error', `Error: ${e}`); } 
   finally { isProcessing.value = false; }
 }
 
-export async function prepareProject() {
+// === Рабочие пространства перевода (пары языков) ===
+export async function loadPairs() {
+  if (!projectPath.value) return;
+  try {
+    const pairs = await invoke('list_translation_pairs', { projectPath: projectPath.value });
+    translationPairs.value = pairs || [];
+    const act = (pairs || []).find(p => p.is_active);
+    activePair.value = act ? act.pair : '';
+  } catch (e) { console.error('loadPairs failed:', e); }
+}
+
+export async function switchPair(p) {
+  if (!projectPath.value || p.is_active) return;
+  try {
     isProcessing.value = true;
+    if (p.is_legacy) {
+      await invoke('use_legacy_db', { projectPath: projectPath.value });
+    } else {
+      await invoke('set_active_pair', { projectPath: projectPath.value, source: p.source || 'original', target: p.target || 'russian' });
+      // подтянем язык пары в настройки
+      if (p.source) sourceLang.value = p.source;
+      if (p.target) targetLang.value = p.target;
+    }
+    await refreshProject();
+    await loadPairs();
+    showMsg('success', `Активная пара: ${p.is_legacy ? 'legacy' : (p.source + ' → ' + p.target)}`, 4000);
+  } catch (e) { showMsg('error', e.toString()); }
+  finally { isProcessing.value = false; }
+}
+
+export async function deletePair(p) {
+  if (!projectPath.value || p.is_legacy) return;
+  const ok = await ask(`Удалить рабочее пространство ${p.source} → ${p.target}? Переводы этой пары будут потеряны.`,
+    { title: 'Удалить пару', kind: 'warning' });
+  if (!ok) return;
+  try {
+    await invoke('delete_translation_pair', { projectPath: projectPath.value, pair: p.pair });
+    await loadPairs();
+    if (p.is_active) await refreshProject();
+  } catch (e) { showMsg('error', e.toString()); }
+}
+
+export async function prepareProject() {
+    // Гейт «осознанного выбора»: не извлекаем, пока пользователь не выбрал ОБА языка.
+    // Это страхует от багов с автодефолтами (контаминация корпуса, неверная пара).
+    if (!sourceLang.value || !targetLang.value) {
+        showMsg('error', t('msg_pick_langs'), 9000);
+        return;
+    }
+    isProcessing.value = true;
+    
+    // Снимаем атрибут read-only со всего проекта ДО распаковки/извлечения —
+    // иначе запись (.rpa-распаковка, декомпиляция, tl/, БД) молча теряет файлы.
+    try { await invoke('prepare_writable', { projectPath: projectPath.value }); } catch (e) { console.error(e); }
+
+    // Проверка прав на запись: игра в Program Files/Steam под UAC недоступна для записи.
+    // Без этой проверки распаковка/патч/БД молча падали бы. Прерываем с понятным советом.
+    try {
+        const writable = await invoke('is_path_writable', { projectPath: projectPath.value });
+        if (!writable) {
+            showMsg('error', t('msg_not_writable'), 15000);
+            isProcessing.value = false;
+            return;
+        }
+    } catch (e) { console.error(e); }
+
+    // Распаковка .rpa архивов (оставляем как было)
     const rpa = projectFiles.value.rpa_files;
-    let unpackCount = 0;
     for (let i = 0; i < rpa.length; i++) {
         showMsg('success', `${t('unpacking')} ${i+1} / ${rpa.length}...`, 0);
-        try { await invoke('run_unrpa', { filePath: rpa[i] }); unpackCount++; } catch (e) { console.error(e); }
+        try { await invoke('run_unrpa', { filePath: rpa[i] }); } catch (e) { console.error(e); }
     }
-    if (unpackCount > 0) { projectFiles.value = await invoke('scan_project', { path: projectPath.value, targetLang: targetLang.value }); }
 
-    const newRpyc = projectFiles.value.rpyc_files;
-    let decompCount = 0;
-    for (let i = 0; i < newRpyc.length; i++) {
-        const expectedRpyPath = newRpyc[i].replace(/\.rpyc$/, '.rpy');
-        if (!projectFiles.value.rpy_files.includes(expectedRpyPath)) {
-            showMsg('success', `${t('decompiling')} ${i+1} / ${newRpyc.length}...`, 0);
-            try { await invoke('run_unrpyc', { filePath: newRpyc[i] }); decompCount++; } catch (e) { console.error(e); }
-        }
+    // .rpa могли распаковаться только что — обновим список языков-источников,
+    // чтобы пользователь мог выбрать «Переводить с» (для .rpa-игр он до этого пуст).
+    if (rpa.length > 0) {
+        try {
+            const langs = await invoke('discover_source_languages', { projectPath: projectPath.value });
+            if (langs && langs.length > 0) availableLanguages.value = langs;
+        } catch (e) { console.error('discover_source_languages failed:', e); }
     }
-    
-    if (decompCount > 0) showMsg('success', `${t('msg_decomp_done')} ${decompCount}`, 5000);
-    else if (unpackCount > 0) showMsg('success', `${t('msg_unpack_done')} ${unpackCount}`, 5000);
-    else showMsg('success', t('status_done'), 3000); 
-    
+
+    // Защита от source == target (бессмысленный «перевод сам в себя»).
+    const _src = (sourceLang.value || '').toLowerCase();
+    const _tgt = (targetLang.value || '').toLowerCase();
+    if (_src && _src !== 'auto' && _src !== 'original' && _src === _tgt) {
+        const ok = await ask(
+            `Язык-источник и язык перевода совпадают (${sourceLang.value}). Извлечение будет «переводом самого в себя». Продолжить?`,
+            { title: 'Источник = Перевод', kind: 'warning' }
+        );
+        if (!ok) { isProcessing.value = false; return; }
+    }
+
+    // Извлечение: чистый AST-экстрактор (не запускает игру, не декомпилирует —
+    // по полноте на паритете с движком, без вмешательства в игру).
+    showMsg('success', t('msg_extracting'), 0);
+    try {
+        const total = await invoke('extract_and_ingest_project', {
+            projectPath: projectPath.value,
+            sourceLang: sourceLang.value,
+            targetLang: targetLang.value
+        });
+        showMsg('success', t('msg_extracted').replace('{n}', total), 8000);
+        
+        // Загружаем доступные языки из БД
+        try {
+            const langs = await invoke('get_project_languages', { projectPath: projectPath.value });
+            if (langs && langs.length > 0) {
+                availableLanguages.value = langs;
+            }
+        } catch (e) { console.error('Failed to load languages:', e); }
+        await loadPairs();
+        
+    } catch (e) {
+        // Бэкенд возвращает коды ошибок извлечения — локализуем известные.
+        const s = (e && e.toString) ? e.toString() : String(e);
+        let msg;
+        if (s.includes('game_dir_missing')) msg = t('msg_no_game_dir');
+        else if (s.includes('extractor_spawn_failed')) msg = t('msg_extractor_spawn') + ' ' + s.replace(/^.*extractor_spawn_failed:?/, '').trim();
+        else if (s.includes('extractor_error')) msg = t('msg_extractor_error') + '\n' + s.replace(/^.*extractor_error:?/, '').trim();
+        else msg = s;
+        showMsg('error', msg, 15000);
+    }
+
     await refreshProject();
+    isProcessing.value = false;
 }
 
 export async function generateTranslations() {
   try {
-    isProcessing.value = true; showMsg('success', t('msg_engine_working'), 0);
-    const res = await invoke('generate_translations', { path: projectPath.value, targetLang: targetLang.value });
-    showMsg('success', res); await refreshProject();
-  } catch (e) { showMsg('error', e, 15000); } finally { isProcessing.value = false; }
+    isProcessing.value = true; 
+    showMsg('success', t('msg_engine_working'), 0);
+    
+    const res = await invoke('generate_translations', { 
+      projectPath: projectPath.value, 
+      targetLang: targetLang.value
+    });
+    
+    showMsg('success', res); 
+    await refreshProject();
+  } catch (e) { 
+    showMsg('error', e, 15000); 
+  } finally { 
+    isProcessing.value = false; 
+  }
 }
 
-// -- Редактор: Парсинг и сохранение --
-function extractTags(text) { return text.match(/(\[.*?\]|\{.*?\})/g) ||[]; }
-export function getMissingTags(block) { return extractTags(block.original).filter(tag => !block.translation.includes(tag)); }
+// Единая функция "Собрать мод" = генерация переводов + внедрение патча.
+// fontRemaps — массив { source, target }, где source — rel_path шрифта игры,
+// target — путь к целевому шрифту (null = встроенный DejaVuSans движка).
+export async function buildMod(fontRemaps = []) {
+  try {
+    isProcessing.value = true;
+    showMsg('success', t('msg_engine_working'), 0);
+    
+    // 1. Генерация файлов перевода
+    const res = await invoke('generate_translations', { 
+      projectPath: projectPath.value, 
+      targetLang: targetLang.value
+    });
+    
+    // 2. Внедрение патча
+    await invoke('apply_renforge_patch', { 
+      projectPath: projectPath.value, 
+      targetLang: targetLang.value, 
+      fontRemaps: fontRemaps
+    });
+    
+    showMsg('success', t('msg_patch_applied'), 5000);
+    await refreshProject();
+  } catch (e) { 
+    showMsg('error', `${e}`, 15000); 
+  } finally { 
+    isProcessing.value = false; 
+  }
+}
+
+// Экспорт перевода для распространения.
+// mode: 'full' — вся игра с впечённым модом («Простой путь»), 'mod' — только оверлей-файлы.
+// pair — чип пары из виджета (берём из него target). Доступно только для собранной пары.
+export async function exportTranslation(pair, mode) {
+  if (!projectPath.value) return;
+  const target = (pair && pair.target) || targetLang.value;
+  if (!target) { showMsg('error', t('msg_pick_langs'), 8000); return; }
+
+  // Предупреждение: мод собран, но БД менялась после сборки — экспортируется старая сборка.
+  if (pair && pair.is_built && pair.is_dirty) {
+    const ok = await ask(t('export_dirty_warn'), { title: t('export_translation'), kind: 'warning' });
+    if (!ok) return;
+  }
+
+  let unlisten = null;
+  try {
+    const dir = await open({ directory: true, multiple: false, title: t('export_choose_dir') });
+    if (!dir) return;
+    const base = projectPath.value.split(/[/\\]/).filter(Boolean).pop() || 'game';
+    const tag = mode === 'full' ? t('export_tag_full') : t('export_tag_mod');
+    const safe = `${base} - RenForge ${target} ${tag}`.replace(/[<>:"/\\|?*]/g, '_');
+    const outRoot = `${dir}/${safe}`;
+
+    isProcessing.value = true;
+    isExporting.value = true;
+    showMsg('success', t('exporting'), 0);
+
+    // Прогресс копирования (особенно важен для «Полной игры» — многогигабайтные копии).
+    unlisten = await listen('export_progress', (e) => {
+      const { done = 0, total = 0 } = e.payload || {};
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      showMsg('success', `${t('exporting')} ${pct}% (${done}/${total})`, 0);
+    });
+
+    const runExport = (overwrite) => invoke('export_translation', {
+      projectPath: projectPath.value, targetLang: target, mode, outRoot, overwrite,
+    });
+
+    let res = await runExport(false);
+    // Папка уже существует — спросим и перезапишем (очистим устаревшие файлы).
+    if (res && res.code === 'exists') {
+      const ok = await ask(t('export_exists_confirm'), { title: t('export_translation'), kind: 'warning' });
+      if (!ok) { showMsg('success', '', 1); return; }
+      res = await runExport(true);
+    }
+
+    if (res && res.code === 'cancelled') {
+      showMsg('success', t('export_cancelled'), 6000);
+    } else if (!res || res.code === 'done') {
+      let msg = mode === 'full'
+        ? t('export_done_full').replace('{files}', res.files).replace('{mb}', res.mb.toFixed(1))
+        : t('export_done_mod').replace('{files}', res.files);
+      if (res.skipped > 0) msg += ' ' + t('export_skipped').replace('{n}', res.skipped);
+      showMsg('success', msg, 12000);
+      try { await invoke('open_in_explorer', { path: outRoot }); } catch (e) { /* не критично */ }
+    } else if (res.code === 'nospace') {
+      showMsg('error', t('export_nospace').replace('{need}', res.need_gb.toFixed(1)).replace('{avail}', res.avail_gb.toFixed(1)), 15000);
+    }
+  } catch (e) {
+    showMsg('error', e.toString(), 12000);
+  } finally {
+    if (unlisten) unlisten();
+    isProcessing.value = false;
+    isExporting.value = false;
+  }
+}
+
+// Отмена текущего экспорта (кнопка в уведомлении). Бэкенд остановится в ближайшей итерации.
+export async function cancelExport() {
+  try { await invoke('cancel_export'); } catch (e) { /* ignore */ }
+}
+
+// Заливка из Translation Memory: точные совпадения оригинала → перевод в непереведённые
+// строки активной пары, помечаются «к проверке». Возвращает число заполненных.
+export async function tmFill() {
+  if (!projectPath.value) return;
+  try {
+    isProcessing.value = true;
+    const n = await invoke('tm_fill', { projectPath: projectPath.value });
+    if (n > 0) { await refreshProject(); }
+    showMsg('success', `${t('tm_filled')} ${n}.`, 7000);
+  } catch (e) { showMsg('error', e.toString(), 12000); }
+  finally { isProcessing.value = false; }
+}
+
+// Откат мода: убирает внедрённую в игру доставку RenForge (патч, рантайм-перевод, шрифты,
+// кэш). БД переводов и локализованные медиа в tl/<target> остаются.
+export async function removeMod(pair) {
+  if (!projectPath.value) return;
+  const ok = await ask(t('remove_mod_confirm'), { title: t('remove_mod'), kind: 'warning' });
+  if (!ok) return;
+  try {
+    isProcessing.value = true;
+    await invoke('remove_renforge_mod', { projectPath: projectPath.value, targetLang: (pair && pair.target) || targetLang.value });
+    showMsg('success', t('remove_mod_done'), 6000);
+    await loadPairs();
+  } catch (e) { showMsg('error', e.toString(), 12000); }
+  finally { isProcessing.value = false; }
+}
+
+// Перенос перевода из прошлой версии игры (fuzzy-миграция).
+export async function migrateTranslations(oldProjectPath) {
+  const report = await invoke('migrate_translations', {
+    newProjectPath: projectPath.value,
+    oldProjectPath: oldProjectPath,
+  });
+  await refreshProject();
+  return report;
+}
+
+// -- Редактор: Работа с базой данных --
+function extractTags(text) { return text.match(/(\[.*?\]|\{.*?\})/g) || []; }
+function extractInterps(text) { return text.match(/\[.*?\]/g) || []; }
+export function getOriginalTags(block) { return extractTags(block.original || ''); }
+export function getMissingTags(block) { 
+    if (!block.original || !block.translation) return [];
+    return extractTags(block.original).filter(tag => !block.translation.includes(tag)); 
+}
+// Лишние интерполяции [var] в переводе, которых НЕТ в оригинале. Это почти всегда
+// ошибка переводчика (несуществующая переменная -> Ren'Py KeyError при подстановке,
+// как было с маркером "[ПЕР]"). {текст-теги} НЕ проверяем — их можно добавлять (формат).
+export function getExtraInterps(block) {
+    if (!block.original || !block.translation) return [];
+    const orig = extractInterps(block.original);
+    return extractInterps(block.translation).filter(tag => !orig.includes(tag));
+}
 
 export function getBlockStatus(block) {
   if (getMissingTags(block).length > 0) return 'error'; 
-  if (!block.translation.trim() || block.translation === block.original) return 'untranslated'; 
+  if (getExtraInterps(block).length > 0) return 'error';
+  if (!block.translation || !block.translation.trim() || block.translation === block.original) return 'untranslated'; 
+  if (block.prev_original) return 'outdated'; // перенесён fuzzy-миграцией, требует проверки
   return 'translated'; 
 }
 
-function extractDialogueParts(line) {
-  const match = line.match(/^([^"]*)"((?:\\.|[^"\\])*)"(.*)$/);
-  if (match) return { prefix: match[1], content: match[2], suffix: match[3] };
-  return { prefix: '', content: line, suffix: '' };
-}
-
-function parseRpy(rawText, filePath) {
-  const blocks =[];
-  const lines = rawText.split('\n');
-  let currentId = null;
-  let isStrings = false;
-  let tempOriginal = '';
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimLine = line.trim();
-    const idMatch = line.match(/^translate\s+\S+\s+([^:]+):/);
-    
-    if (idMatch) { currentId = idMatch[1]; isStrings = (currentId === 'strings'); tempOriginal = ''; continue; }
-    if (!currentId) continue;
-
-    if (isStrings) {
-        if (trimLine.startsWith('old ') && line.includes('"')) {
-            tempOriginal = extractDialogueParts(trimLine).content.replace(/\\"/g, '"');
-        } else if (trimLine.startsWith('new ') && line.includes('"')) {
-            const p = extractDialogueParts(line);
-            const block = { id: `string_${i}`, original: tempOriginal, translation: p.content.replace(/\\"/g, '"'), prefix: p.prefix, suffix: p.suffix, lineIndex: i };
-            blocks.push(block);
-        }
-    } else {
-        let cleanLine = trimLine.startsWith('#') ? trimLine.substring(1).trim() : trimLine;
-        if (/^(voice|play|stop|scene|show|hide|window|pause|\$|jump|call|return)(?:\s|\(|$)/.test(cleanLine)) continue;
-
-        if (trimLine.startsWith('#') && line.includes('"')) {
-            tempOriginal = extractDialogueParts(cleanLine).content.replace(/\\"/g, '"');
-        } else if (trimLine !== '' && !trimLine.startsWith('#') && line.includes('"')) {
-            const p = extractDialogueParts(line);
-            const block = { id: currentId, original: tempOriginal, translation: p.content.replace(/\\"/g, '"'), prefix: p.prefix, suffix: p.suffix, lineIndex: i };
-            blocks.push(block);
-            currentId = null; 
-        }
-    }
-  }
-  return blocks;
-}
-
-export async function openEditor(filePath) {
+export async function openEditor(dbFilePath) {
   try {
     isEditorLoading.value = true;
     currentMode.value = 'editor';
-    showRawView.value = false;
     hideTranslated.value = false;
-    currentFilePath.value = filePath;
-    const text = await invoke('read_rpy_file', { projectPath: projectPath.value, filePath: filePath });
-    rawFileText.value = text.replace(/\r\n/g, '\n'); 
-    parsedBlocks.value = parseRpy(rawFileText.value, filePath); 
-  } catch (e) { showMsg('error', `Error: ${e}`); currentMode.value = 'dashboard'; } 
+    currentFilePath.value = dbFilePath; // Сохраняем имя файла (например "script.rpy")
+    
+    // Запрашиваем строки напрямую из SQLite
+    const entries = await invoke('get_translations_for_file', { 
+        projectPath: projectPath.value, 
+        filePath: dbFilePath 
+    });
+    
+    parsedBlocks.value = entries; 
+    editorDirty.value = false;
+    
+    if (entries.length === 0 && dbFilePath !== MANUAL_FILE) {
+        showMsg('error', 'В этом файле не найдено строк в базе. Выполните "Распаковать и Вскрыть всё".');
+    }
+  } catch (e) { 
+    showMsg('error', `Error: ${e}`); 
+    currentMode.value = 'dashboard'; 
+  } 
   finally { isEditorLoading.value = false; }
 }
 
-export async function viewOriginalScript(filePath) {
+// Простой строковый хеш (djb2) для генерации id ручных строк по оригиналу.
+function hashStr(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
+// Ручное добавление строки (закрывает пропуски экстракции). Доставка text-keyed:
+// нужны только оригинал + перевод + канал (dialogue/menu -> say_map, ui -> ui_map).
+// file_path и line_number для доставки КОСМЕТИЧЕСКИ (рантайм матчит по тексту) — служат
+// лишь навигации в редакторе. По умолчанию строка идёт в псевдо-файл «Ручные строки»;
+// при toCurrentFile=true кладётся в текущий открытый файл с якорем lineNumber (для контекста).
+// type: 'dialogue' | 'ui'. Возвращает id блока (для прокрутки к нему).
+export async function addManualString(original, translation, type, toCurrentFile, lineNumber) {
+  const orig = (original || '').trim();
+  if (!orig) return null;
+  const blockType = type === 'dialogue' ? 'dialogue' : 'ui';
+  const id = 'manual_' + hashStr(blockType + '\u0000' + orig);
+  const tr = (translation || '').trim();
+  const useCurrent = !!toCurrentFile && currentFilePath.value && currentFilePath.value !== MANUAL_FILE;
+  const filePath = useCurrent ? currentFilePath.value : MANUAL_FILE;
+  const ln = useCurrent ? (parseInt(lineNumber, 10) || 0) : 0;
+
+  const block = {
+    id,
+    block_type: blockType,
+    file_path: filePath,
+    line_number: ln,
+    who: blockType === 'ui' ? '[ИНТЕРФЕЙС]' : '',
+    original: orig,
+    translation: translation || '',
+    status: tr ? 'translated' : 'untranslated',
+    prefix: null,
+    prev_original: null,
+  };
+
+  if (filePath === currentFilePath.value) {
+    // Цель — текущий открытый файл (реальный или сам MANUAL_FILE): вставляем в список
+    // на позицию по line_number (сохранится по кнопке «Сохранить»).
+    const idx = parsedBlocks.value.findIndex(b => b.id === id);
+    if (idx >= 0) {
+      parsedBlocks.value[idx] = { ...parsedBlocks.value[idx], ...block };
+    } else {
+      let pos = parsedBlocks.value.findIndex(b => (b.line_number || 0) > ln);
+      if (pos < 0) pos = parsedBlocks.value.length;
+      parsedBlocks.value.splice(pos, 0, block);
+    }
+    editorDirty.value = true;
+  } else {
+    // Цель — «Ручные строки», а открыт другой файл: пишем сразу в БД.
+    try {
+      await invoke('upsert_translations_batch', { projectPath: projectPath.value, entries: [block] });
+      fileStats.value = await invoke('get_translation_stats', { projectPath: projectPath.value });
+    } catch (e) { showMsg('error', `Error: ${e}`); return null; }
+  }
+  return id;
+}
+
+// Является ли блок ручной строкой (id начинается с manual_).
+export function isManualString(block) {
+  return !!block && typeof block.id === 'string' && block.id.startsWith('manual_');
+}
+
+// Правка ручной строки на месте (тип/оригинал/перевод). id оставляем прежним — это
+// просто ключ строки в БД (доставка матчит по тексту), смена original его не требует.
+export function updateManualString(block, original, translation, type) {
+  if (!block) return;
+  const orig = (original || '').trim();
+  if (!orig) return;
+  const blockType = type === 'dialogue' ? 'dialogue' : 'ui';
+  block.block_type = blockType;
+  block.original = orig;
+  block.translation = translation || '';
+  block.who = blockType === 'ui' ? '[ИНТЕРФЕЙС]' : '';
+  block.status = (translation || '').trim() ? 'translated' : 'untranslated';
+  editorDirty.value = true;
+}
+
+// Удаление ручной строки: из БД (если уже сохранена) и из текущего списка редактора.
+export async function deleteManualString(block) {
+  if (!block) return;
+  const ok = await ask(t('manual_delete_confirm'), { title: t('manual_delete'), kind: 'warning' });
+  if (!ok) return;
   try {
-    isEditorLoading.value = true;
-    currentMode.value = 'editor';
-    showRawView.value = true;
-    currentFilePath.value = filePath;
-    const text = await invoke('read_rpy_file', { projectPath: projectPath.value, filePath: filePath });
-    rawFileText.value = text.replace(/\r\n/g, '\n'); 
-    parsedBlocks.value =[]; 
-  } catch (e) { showMsg('error', `Error: ${e}`); } 
-  finally { isEditorLoading.value = false; }
+    await invoke('delete_translations', { projectPath: projectPath.value, ids: [block.id] });
+  } catch (e) { showMsg('error', `Error: ${e}`); return; }
+  const idx = parsedBlocks.value.findIndex(b => b.id === block.id);
+  if (idx >= 0) parsedBlocks.value.splice(idx, 1);
+  try {
+    fileStats.value = await invoke('get_translation_stats', { projectPath: projectPath.value });
+  } catch (e) { /* не критично */ }
+  showMsg('success', t('manual_deleted'));
 }
 
 export async function saveFile() {
@@ -142,114 +465,30 @@ export async function saveFile() {
   if (hasErrors) { showMsg('error', t('msg_cannot_save_errors')); return; }
   
   try {
-    const lines = rawFileText.value.split('\n');
-    const entriesToSave =[];
+    // Обновляем статусы перед отправкой
+    parsedBlocks.value.forEach(b => b.status = getBlockStatus(b));
     
-    for (const block of parsedBlocks.value) {
-        const escaped = block.translation.replace(/"/g, '\\"');
-        lines[block.lineIndex] = `${block.prefix}"${escaped}"${block.suffix}`;
-        entriesToSave.push({ id: block.id, file_path: currentFilePath.value, original: block.original, translation: block.translation, status: getBlockStatus(block) });
-    }
+    await invoke('upsert_translations_batch', { projectPath: projectPath.value, entries: parsedBlocks.value });
     
-    await invoke('upsert_translations_batch', { projectPath: projectPath.value, entries: entriesToSave });
-    const newFileContent = lines.join('\n');
-    await invoke('write_rpy_file', { projectPath: projectPath.value, filePath: currentFilePath.value, content: newFileContent });
-    
+    // Обновляем визуальный прогресс-бар в дашборде
     fileStats.value[currentFilePath.value] = { 
         total: parsedBlocks.value.length, 
-        translated: parsedBlocks.value.filter(b => getBlockStatus(b) === 'translated').length 
+        translated: parsedBlocks.value.filter(b => b.status === 'translated').length,
+        outdated: parsedBlocks.value.filter(b => getBlockStatus(b) === 'outdated').length
     };
     showMsg('success', t('msg_file_saved'));
+    editorDirty.value = false;
+    lastSavedAt.value = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // Авто-наполнение Translation Memory переведёнными строками активной пары (фоном).
+    invoke('tm_contribute', { projectPath: projectPath.value }).catch(() => {});
   } catch (e) { showMsg('error', `Error: ${e}`); }
 }
 
-// -- Fallback Editor --
-export async function openFallbackEditor(f) {
-    try {
-        isProcessing.value = true;
-        fallbackIsEditMode.value = f.isSynced || false;
-        
-        let origRelPath = f.name + '.rpy';
-        if (f.rpyPath) {
-            const rel = f.rpyPath.replace(/\\/g, '/').replace(projectPath.value.replace(/\\/g, '/'), '').replace(/^\//, '');
-            origRelPath = rel.startsWith('game/') ? rel.substring(5) : rel;
-        } else if (f.tlPath) {
-            const match = f.tlPath.replace(/\\/g, '/').match(new RegExp(`tl/${targetLang.value}/(.*)`));
-            if (match) origRelPath = match[1];
-        }
-        fallbackRelPath.value = origRelPath;
-        
-        const targetRpyPath = f.rpyPath || (projectPath.value + '/game/' + origRelPath);
-        const text = await invoke('read_rpy_file', { projectPath: projectPath.value, filePath: targetRpyPath });
-        
-        const parsed = parseFallbackFile(text.replace(/\r\n/g, '\n'));
-
-        if (fallbackIsEditMode.value) {
-            try {
-                const tlFilePath = projectPath.value + '/game/tl/' + targetLang.value + '/' + origRelPath;
-                const tlText = await invoke('read_rpy_file', { projectPath: projectPath.value, filePath: tlFilePath });
-                if (tlText) {
-                    parsed.forEach(line => {
-                        line.parts.forEach(part => { if (part.type === 'string' && part.fullRaw && tlText.includes(part.fullRaw)) part.selected = true; });
-                    });
-                }
-            } catch(e) {}
-        }
-        fallbackLines.value = parsed;
-        currentMode.value = 'fallback-editor';
-    } catch(e) { showMsg('error', 'Ошибка: ' + e.toString()); } finally { isProcessing.value = false; }
-}
-
-function parseFallbackFile(text) {
-    const tokenRegex = /("[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')/g;
-    const matches =[];
-    let match;
-    while ((match = tokenRegex.exec(text)) !== null) { matches.push({ start: match.index, end: match.index + match[0].length, raw: match[0], id: 'str_' + match.index }); }
-
-    const textLines = text.split('\n');
-    let currentLineStart = 0; let matchIdx = 0;
-
-    return textLines.map((lineStr, idx) => {
-        const lineEnd = currentLineStart + lineStr.length;
-        let parts =[]; let cursor = currentLineStart;
-
-        while (matchIdx < matches.length && matches[matchIdx].start < lineEnd) {
-            const m = matches[matchIdx];
-            if (m.start > cursor) { parts.push({ type: 'code', text: text.substring(cursor, m.start) }); cursor = m.start; }
-
-            const partEnd = Math.min(m.end, lineEnd);
-            const partText = text.substring(cursor, partEnd);
-            const innerText = m.raw.slice(1, -1);
-            let canAuto = false; let suspicious = false;
-            
-            if (innerText.trim() !== '') {
-                const textClean = innerText.replace(/<\/?[^>]+>|\{\/?[^}]+\}|\[[^\]]+\]/g, '');
-                const isExt = /\.(png|jpg|jpeg|webp|ogg|mp3|wav|ttf|otf|rpy|rpyc|webm|mp4|txt|csv)$/i.test(innerText);
-                const isHex = /^#[0-9a-fA-F]{3,8}$/.test(innerText);
-                const hasLetters = /\p{L}/u.test(textClean);
-                const isTech = /^[a-z_][a-zA-Z0-9_]*$/.test(innerText) || /%[sdefgi]/.test(innerText);
-                const isPath = textClean.includes('/') || textClean.includes('\\');
-                const isShort = textClean.trim().length <= 1;
-
-                if (isExt || isHex || !hasLetters) { canAuto = false; suspicious = false; } 
-                else if (isTech || isPath || isShort) { canAuto = false; suspicious = true; } 
-                else { canAuto = true; suspicious = false; }
-            }
-            parts.push({ type: 'string', text: partText, fullRaw: m.raw, groupId: m.id, selected: false, canAuto, suspicious });
-            cursor = partEnd;
-            if (m.end <= lineEnd) matchIdx++; else break;
-        }
-        if (cursor < lineEnd) parts.push({ type: 'code', text: text.substring(cursor, lineEnd) });
-        currentLineStart = lineEnd + 1;
-        return { index: idx + 1, parts };
-    });
-}
-
-// -- Экспорт / Импорт --
+// Экспорт / Импорт (почти без изменений, адаптирован под новые объекты)
 export async function exportCSV() {
     let csvContent = "ID;Original;Translation\n";
     parsedBlocks.value.forEach(b => {
-        const orig = b.original.replace(/"/g, '""').replace(/\n/g, "[BR]");
+        const orig = (b.original || "").replace(/"/g, '""').replace(/\n/g, "[BR]");
         let tran = (b.translation || "").replace(/"/g, '""').replace(/\n/g, "[BR]");
         if (/^[=+\-@]/.test(tran)) { tran = "'" + tran; }
         csvContent += `"${b.id}";"${orig}";"${tran}"\n`;
@@ -279,15 +518,7 @@ export async function importCSV() {
                 if (block && tran) { block.translation = tran; updatedCount++; }
             }
         }
-        
-        
-        if (currentFilePath.value) {
-            fileStats.value[currentFilePath.value] = { 
-                total: parsedBlocks.value.length, 
-                translated: parsedBlocks.value.filter(b => getBlockStatus(b) === 'translated').length 
-            };
-        }
-        
+        if (updatedCount > 0) editorDirty.value = true;
         showMsg('success', `${t('msg_csv_imported')} ${updatedCount}.`);
     } catch (e) { showMsg('error', `Error: ${e}`); }
 }
@@ -311,15 +542,88 @@ export async function importJSON() {
             const block = parsedBlocks.value.find(b => b.id === item.id);
             if (block && item.translation) { block.translation = item.translation; updatedCount++; }
         });
-        
-        
-        if (currentFilePath.value) {
-            fileStats.value[currentFilePath.value] = { 
-                total: parsedBlocks.value.length, 
-                translated: parsedBlocks.value.filter(b => getBlockStatus(b) === 'translated').length 
-            };
-        }
-        
+        if (updatedCount > 0) editorDirty.value = true;
         showMsg('success', `${t('msg_json_imported')} ${updatedCount}.`);
+    } catch (e) { showMsg('error', `Error: ${e}`); }
+}
+
+// === PO (gettext) экспорт/импорт ===
+// PO несёт то, чего нет в CSV: ссылку на источник (#: file:line), контекст (msgctxt — у нас
+// id строки, гарантирует уникальность при одинаковых оригиналах) и флаг #, fuzzy (требует
+// проверки). Совместимо с Poedit/Weblate/OmegaT/gettext.
+function poEscape(s) {
+    return (s || '')
+        .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r');
+}
+function poUnescape(s) {
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (c === '\\') {
+            const n = s[++i];
+            out += n === 'n' ? '\n' : n === 't' ? '\t' : n === 'r' ? '\r' : (n || '');
+        } else { out += c; }
+    }
+    return out;
+}
+function parsePO(text) {
+    const entries = [];
+    let cur = null, field = null;
+    const finalize = () => { if (cur && (cur.id !== undefined || cur.ctxt !== undefined)) entries.push(cur); cur = null; field = null; };
+    for (const raw of text.split('\n')) {
+        const line = raw.replace(/\r$/, '');
+        if (line.startsWith('#')) {
+            if (line.startsWith('#,') && line.includes('fuzzy')) { if (!cur) cur = {}; cur.fuzzy = true; }
+            continue;
+        }
+        const t = line.trim();
+        if (t === '') { finalize(); continue; }
+        let m;
+        if ((m = t.match(/^msgctxt\s+"(.*)"$/))) { if (!cur) cur = {}; cur.ctxt = poUnescape(m[1]); field = 'ctxt'; }
+        else if ((m = t.match(/^msgid\s+"(.*)"$/))) { if (!cur) cur = {}; cur.id = poUnescape(m[1]); field = 'id'; }
+        else if ((m = t.match(/^msgstr\s+"(.*)"$/))) { if (!cur) cur = {}; cur.str = poUnescape(m[1]); field = 'str'; }
+        else if ((m = t.match(/^"(.*)"$/)) && cur) { // продолжение многострочной строки
+            const v = poUnescape(m[1]);
+            if (field === 'ctxt') cur.ctxt = (cur.ctxt || '') + v;
+            else if (field === 'id') cur.id = (cur.id || '') + v;
+            else if (field === 'str') cur.str = (cur.str || '') + v;
+        }
+    }
+    finalize();
+    return entries;
+}
+
+export async function exportPO() {
+    let po = 'msgid ""\nmsgstr ""\n"Project-Id-Version: RenForge\\n"\n"Content-Type: text/plain; charset=UTF-8\\n"\n\n';
+    parsedBlocks.value.forEach(b => {
+        const ref = (b.file_path || '').replace(/[\n\r]/g, ' ');
+        po += `#: ${ref}:${b.line_number || 0}\n`;
+        if (getBlockStatus(b) === 'outdated') po += '#, fuzzy\n';
+        po += `msgctxt "${poEscape(b.id)}"\n`;
+        po += `msgid "${poEscape(b.original)}"\n`;
+        po += `msgstr "${poEscape(b.translation)}"\n\n`;
+    });
+    try {
+        const savePath = await save({ filters:[{ name: 'PO', extensions:['po'] }] });
+        if (savePath) { await invoke('write_text_file', { path: savePath, content: po }); showMsg('success', t('msg_po_exported')); }
+    } catch (e) { showMsg('error', `Error: ${e}`); }
+}
+
+export async function importPO() {
+    try {
+        const selected = await open({ multiple: false, filters:[{ name: 'PO', extensions: ['po', 'pot'] }] });
+        if (!selected) return;
+        const content = await invoke('read_text_file', { path: selected });
+        const entries = parsePO(content);
+        let updatedCount = 0;
+        for (const e of entries) {
+            if (e.ctxt === undefined) continue;       // пропускаем заголовок/строки без контекста
+            if (!e.str) continue;                      // пустой перевод — не трогаем
+            const block = parsedBlocks.value.find(b => b.id === e.ctxt);
+            if (block) { block.translation = e.str; updatedCount++; }
+        }
+        if (updatedCount > 0) editorDirty.value = true;
+        showMsg('success', `${t('msg_po_imported')} ${updatedCount}.`);
     } catch (e) { showMsg('error', `Error: ${e}`); }
 }
