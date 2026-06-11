@@ -13,6 +13,12 @@
 ![Latest release](https://img.shields.io/github/v/release/foulnike/RenForge)
 ![Downloads](https://img.shields.io/github/downloads/foulnike/RenForge/total)
 
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-24C8DB?logo=tauri&logoColor=white)
+![Vue.js](https://img.shields.io/badge/Vue.js-4FC08D?logo=vuedotjs&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![Ren'Py](https://img.shields.io/badge/Ren'Py-FF7F7F?logo=renpy&logoColor=white)
+
 </div>
 
 ---
@@ -89,12 +95,6 @@ GUI-инструмент для извлечения текста, локали�
 Строки с чужим плейсхолдером `[var]` пропускаются, чтобы не словить `KeyError` в игре. Продвинутые пользователи могут вплести в доставку собственный Python/Ren'Py-код через экспертные хуки (с готовым API и проверкой синтаксиса).
 
 ## Стек
-
-![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
-![Tauri](https://img.shields.io/badge/Tauri-24C8DB?logo=tauri&logoColor=white)
-![Vue.js](https://img.shields.io/badge/Vue.js-4FC08D?logo=vuedotjs&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
-![Ren'Py](https://img.shields.io/badge/Ren'Py-FF7F7F?logo=renpy&logoColor=white)
 
 - **Frontend:** Vue 3 + Vite.
 - **Backend:** Rust (Tauri 2.0).
