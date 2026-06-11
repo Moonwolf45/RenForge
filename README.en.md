@@ -2,6 +2,11 @@
 
 [Русский](README.md) · **English**
 
+![License](https://img.shields.io/badge/license-GPL--3.0-orange)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
+![Latest release](https://img.shields.io/github/v/release/foulnike/RenForge)
+![Downloads](https://img.shields.io/github/downloads/foulnike/RenForge/total)
+
 A GUI tool for text extraction, localization and translation-mod building for games made with the **Ren'Py** engine. Asset unpacking, string extraction, a translation editor, media localization and final mod assembly — all in one window, with no Python installation and no Ren'Py SDK.
 
 Platform: **Windows x64**. License: **GPL-3.0**.
