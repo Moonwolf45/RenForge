@@ -1,4 +1,10 @@
+<div align="center">
+
+<img src="app-icon.png" width="128" alt="Логотип RenForge">
+
 # RenForge
+
+**Извлечение, перевод и сборка модов-переводов для игр на Ren'Py — в одном окне.**
 
 **Русский** · [English](README.md)
 
@@ -6,6 +12,10 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![Latest release](https://img.shields.io/github/v/release/foulnike/RenForge)
 ![Downloads](https://img.shields.io/github/downloads/foulnike/RenForge/total)
+
+</div>
+
+---
 
 GUI-инструмент для извлечения текста, локализации и сборки модов-переводов игр на движке **Ren'Py**. Распаковка ресурсов, извлечение строк, редактор перевода, локализация медиа и сборка готового мода — в одном окне, без установки Python и без работы с Ren'Py SDK.
 

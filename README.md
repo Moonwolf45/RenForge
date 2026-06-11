@@ -1,4 +1,10 @@
+<div align="center">
+
+<img src="app-icon.png" width="128" alt="RenForge logo">
+
 # RenForge
+
+**Extract, translate and build translation mods for Ren'Py games — all in one window.**
 
 [Русский](README.ru.md) · **English**
 
@@ -6,6 +12,10 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![Latest release](https://img.shields.io/github/v/release/foulnike/RenForge)
 ![Downloads](https://img.shields.io/github/downloads/foulnike/RenForge/total)
+
+</div>
+
+---
 
 A GUI tool for text extraction, localization and translation-mod building for games made with the **Ren'Py** engine. Asset unpacking, string extraction, a translation editor, media localization and final mod assembly — all in one window, with no Python installation and no Ren'Py SDK.
 
