@@ -90,6 +90,12 @@ Strings with a foreign `[var]` placeholder are skipped to avoid `KeyError` in th
 
 ## Stack
 
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-24C8DB?logo=tauri&logoColor=white)
+![Vue.js](https://img.shields.io/badge/Vue.js-4FC08D?logo=vuedotjs&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![Ren'Py](https://img.shields.io/badge/Ren'Py-FF7F7F?logo=renpy&logoColor=white)
+
 - **Frontend:** Vue 3 + Vite.
 - **Backend:** Rust (Tauri 2.0).
 - **Storage:** SQLite — translation progress (per language pair), statistics, glossary.
