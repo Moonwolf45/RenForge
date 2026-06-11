@@ -55,6 +55,26 @@ The WebView2 runtime is bundled into the installer (works offline).
 6. "Build mod" — inject the translation. Launch the game or press Shift+R for a hot reload.
 7. "Translations" → "Export": full game or mod only.
 
+## How it works
+
+### Extraction
+
+The extractor reads compiled `.rpyc` bytecode directly — no `.rpy` sources required. It unpickles the embedded AST (handling the zlib stream and legacy formats), then walks the tree and collects translatable text by statement type: dialogue (`Say`), choices (`Menu`), screen/UI strings, `_()` calls, `Text(_("..."))` inside `layeredimage`/`image`, and `renpy.input` prompts. Each string is classified by channel (`dialogue` / `menu` / `ui` / `python`) and stored with its file, line and Ren'Py translation ID. The engine version and legacy language-suffixed files (`script_ru.rpyc`, etc.) are detected automatically. The bundled `unrpyc` provides full decompilation for the source viewer.
+
+### Delivery
+
+Delivery does **not** use Ren'Py's built-in translation blocks and does **not** switch the game language (that poisons `persistent._preferences.language` and crashes games that index dictionaries by language). Instead RenForge generates a single crash-safe runtime `.rpy` that substitutes text **by its original string** at runtime — fully language-independent.
+
+Translations are split into two dictionaries (dialogue/menu vs. UI) and delivered through several channels:
+
+- **`say_menu_text_filter`** — dialogue and menu text.
+- **Direct injection into `translator.strings`** — UI strings (bypasses `add()` and its collision check, so it overrides even the game's own translations without crashing).
+- **An early `_()` / `translate_string` hook** (placed in `python early`, before init) — catches UI text baked into images at build time.
+- **`renpy.input` wrapper** — prompts (player name, etc.).
+- **`renpy.ui.text` wrapper** — UI strings on legacy engines (6.12–6.17) that have no translation framework.
+
+Strings with a foreign `[var]` placeholder are skipped to avoid `KeyError` in the game. Advanced users can weave custom Python/Ren'Py code into delivery via expert hooks (with a ready-made API and syntax checking).
+
 ## Stack
 
 - **Frontend:** Vue 3 + Vite.
