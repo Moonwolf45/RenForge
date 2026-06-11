@@ -21,6 +21,19 @@ A GUI tool for text extraction, localization and translation-mod building for ga
 
 Platform: **Windows x64**. License: **GPL-3.0**.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/dashboard.png" width="420"><br><sub>Dashboard</sub></td>
+    <td align="center"><img src="docs/editor.png" width="420"><br><sub>Translation editor</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images.png" width="420"><br><sub>Image localization</sub></td>
+    <td align="center"><img src="docs/audio.png" width="420"><br><sub>Audio localization</sub></td>
+  </tr>
+</table>
+
 ## Features
 
 - **Standalone** — no Python or external dependencies required.

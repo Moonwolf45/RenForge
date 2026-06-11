@@ -21,6 +21,19 @@ GUI-инструмент для извлечения текста, локали�
 
 Платформа: **Windows x64**. Лицензия: **GPL-3.0**.
 
+## Скриншоты
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/dashboard.png" width="420"><br><sub>Дашборд</sub></td>
+    <td align="center"><img src="docs/editor.png" width="420"><br><sub>Редактор перевода</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images.png" width="420"><br><sub>Локализация изображений</sub></td>
+    <td align="center"><img src="docs/audio.png" width="420"><br><sub>Локализация аудио</sub></td>
+  </tr>
+</table>
+
 ## Возможности
 
 - **Standalone** — Python и внешние зависимости не требуются.
