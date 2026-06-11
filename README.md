@@ -1,75 +1,75 @@
 # RenForge
 
-**Русский** · [English](README.en.md)
+[Русский](README.ru.md) · **English**
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-orange)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![Latest release](https://img.shields.io/github/v/release/foulnike/RenForge)
 ![Downloads](https://img.shields.io/github/downloads/foulnike/RenForge/total)
 
-GUI-инструмент для извлечения текста, локализации и сборки модов-переводов игр на движке **Ren'Py**. Распаковка ресурсов, извлечение строк, редактор перевода, локализация медиа и сборка готового мода — в одном окне, без установки Python и без работы с Ren'Py SDK.
+A GUI tool for text extraction, localization and translation-mod building for games made with the **Ren'Py** engine. Asset unpacking, string extraction, a translation editor, media localization and final mod assembly — all in one window, with no Python installation and no Ren'Py SDK.
 
-Платформа: **Windows x64**. Лицензия: **GPL-3.0**.
+Platform: **Windows x64**. License: **GPL-3.0**.
 
-## Возможности
+## Features
 
-- **Standalone** — Python и внешние зависимости не требуются.
-- **Извлечение текста** напрямую из `.rpyc` через AST-анализ байткода (Ren'Py 6.x–8.x) + автоматическая распаковка `.rpa`.
-- **Языковые пары** — несколько переводов (`источник → перевод`) в одном проекте, у каждого своя база и прогресс, с быстрым переключением.
-- **Редактор перевода** — построчно, с проверкой целостности тегов `{...}` и переменных `[...]`, глоссарием, поиском и переносом перевода между версиями игры. Ручное добавление/правка/удаление строк; переопределение канала доставки для отдельной строки.
-- **Просмотр исходника** — декомпиляция `.rpyc` (unrpyc) с подсветкой синтаксиса и минимапом: извлечённые строки подсвечены, потенциально пропущенные предлагаются к добавлению в один клик.
-- **ИИ-перевод (LLM)** — локальные модели (Ollama), облачный OpenAI-совместимый API или буфер обмена; пакетно, порциями, с проверкой выравнивания ответа.
-- **Память переводов (TM)** — автонакопление пар и авто-заливка точных совпадений с пометкой «к проверке».
-- **Медиа** — локализация изображений и аудио (с транслитерацией реплик для дубляжа).
-- **Доставка** — языконезависимая подмена текста в рантайме (без переключения языка игры и конфликтов с её селектором локализаций), горячая перезагрузка (Shift+R), замена шрифтов. Экспертные хуки доставки для нестандартных стейтментов.
-- **Сборка** — экспорт полной игры со встроенным переводом или отдельного оверлей-мода.
+- **Standalone** — no Python or external dependencies required.
+- **Text extraction** straight from `.rpyc` via AST analysis of the bytecode (Ren'Py 6.x–8.x), plus automatic `.rpa` unpacking.
+- **Language pairs** — multiple translations (`source → target`) in a single project, each with its own database and progress, with quick switching.
+- **Translation editor** — line by line, with `{...}` tag and `[...]` variable integrity checks, a glossary, search, and translation transfer between game versions. Manual add/edit/delete of strings; per-string delivery channel override.
+- **Source viewer** — `.rpyc` decompilation (unrpyc) with syntax highlighting and a minimap: extracted strings are highlighted, potentially missed ones are offered for one-click adding.
+- **AI translation (LLM)** — local models (Ollama), a cloud OpenAI-compatible API, or the clipboard; in batches, in chunks, with response alignment checks.
+- **Translation Memory (TM)** — auto-accumulation of pairs and auto-fill of exact matches flagged "to review".
+- **Media** — localization of images and audio (with line transliteration for dubbing).
+- **Delivery** — language-independent runtime text substitution (no game language switching and no conflict with the game's own localization selector), hot reload (Shift+R), font replacement. Expert delivery hooks for non-standard statements.
+- **Build** — export a full game with the embedded translation, or a standalone overlay mod.
 
-## Установка
+## Installation
 
-Со страницы релиза:
+From the release page:
 
-- **`RenForge_v1.2.0_Windows_Installer.msi`** — установщик (MSI).
-- **`RenForge_v1.2.0_Portable.zip`** — Портативная версия.
+- **`RenForge_v1.2.0_Windows_Installer.msi`** — installer (MSI).
+- **`RenForge_v1.2.0_Portable.zip`** — portable build.
 
-Рантайм WebView2 встроен в установщик (работает офлайн).
+The WebView2 runtime is bundled into the installer (works offline).
 
-> Работайте с копией игры в обычной пользовательской папке. Если игра лежит в `Program Files` или каталоге Steam, у программы может не быть прав на запись — скопируйте её, например, на рабочий стол.
+> Work on a copy of the game in a regular user folder. If the game lives in `Program Files` or a Steam directory, the app may lack write permissions — copy it somewhere like the desktop.
 
-## Быстрый старт
+## Quick start
 
-1. «Выбрать папку» → корневая директория игры (там, где `.exe`).
-2. В настройках выберите язык-источник и язык перевода.
-3. «Извлечь текст» — распаковка `.rpa` и сбор строк в базу.
-4. Переводите в редакторе (глоссарий, проверка тегов) или через ИИ-ассистента.
-5. «Изображения» / «Аудио» — подмена медиа.
-6. «Собрать мод» — внедрение перевода. Запустите игру или нажмите Shift+R для горячей перезагрузки.
-7. «Переводы» → «Экспорт»: полная игра или только мод.
+1. "Select folder" → the game's root directory (where the `.exe` is).
+2. In settings, pick the source language and the target language.
+3. "Extract text" — unpacks `.rpa` and collects strings into the database.
+4. Translate in the editor (glossary, tag checks) or via the AI assistant.
+5. "Images" / "Audio" — swap media.
+6. "Build mod" — inject the translation. Launch the game or press Shift+R for a hot reload.
+7. "Translations" → "Export": full game or mod only.
 
-## Стек
+## Stack
 
 - **Frontend:** Vue 3 + Vite.
 - **Backend:** Rust (Tauri 2.0).
-- **Хранение:** SQLite — прогресс перевода (по паре языков), статистика, глоссарий.
-- **Сайдкары:** `unrpa` (распаковка `.rpa`) и `rpyc_extractor` (собственный AST-экстрактор; включает unrpyc для декомпиляции в просмотре исходника). Исходники — в `src-tauri/tools/`.
+- **Storage:** SQLite — translation progress (per language pair), statistics, glossary.
+- **Sidecars:** `unrpa` (`.rpa` unpacking) and `rpyc_extractor` (our own AST extractor; includes unrpyc for decompilation in the source viewer). Sources are in `src-tauri/tools/`.
 
-## Сборка из исходников
+## Building from source
 
-Требуются Node.js и Rust (toolchain для Tauri). Готовые сайдкары лежат в `src-tauri/bin/`.
+Requires Node.js and Rust (the Tauri toolchain). Prebuilt sidecars are in `src-tauri/bin/`.
 
 ```
 npm install
 npm run tauri build
 ```
 
-## Лицензирование
+## Licensing
 
-RenForge распространяется под лицензией **GNU GPL v3.0**.
+RenForge is distributed under the **GNU GPL v3.0**.
 
-Сторонние компоненты:
+Third-party components:
 
-| Компонент | Лицензия | Назначение |
+| Component | License | Purpose |
 | :--- | :--- | :--- |
-| [unrpa](https://github.com/Lattyware/unrpa) | GPL-3.0 | Распаковка архивов `.rpa` |
-| [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT (`codegen.py` — BSD-3) | Декомпиляция `.rpyc` (просмотр исходника) |
+| [unrpa](https://github.com/Lattyware/unrpa) | GPL-3.0 | `.rpa` archive unpacking |
+| [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT (`codegen.py` — BSD-3) | `.rpyc` decompilation (source viewer) |
 
-Полные тексты лицензий — в `src-tauri/licenses/`, а в приложении: «О программе» → «Открыть папку лицензий».
+Full license texts are in `src-tauri/licenses/`, and inside the app: "About" → "Open licenses folder".
