@@ -75,8 +75,9 @@ pub struct ExtractedData {
 pub struct FontInfo {
     pub rel_path: String,
     pub name: String,
-    /// Коды покрываемых шрифтом скриптов: "latin","cyrillic","greek",
-    /// "japanese","chinese","korean","arabic","thai","hebrew".
+    /// Коды покрываемых шрифтом письменностей ("latin", "cyrillic", "greek",
+    /// "japanese", …). Полный перечень здесь не дублируем — источник истины:
+    /// probe-таблица определения покрытия в lib.rs.
     pub scripts: Vec<String>,
 }
 
