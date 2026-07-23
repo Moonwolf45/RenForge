@@ -125,7 +125,7 @@ RenForge распространяется под лицензией **GNU GPL v3
 
 ## Соавторы
 
-RenForge разрабатывается [foulnike](https://github.com/foulnike) в парном программировании с ИИ-ассистентами, которые честно указаны как соавторы:
+RenForge разрабатывается [foulnike](https://github.com/foulnike) в парном программировании с ИИ-ассистентами:
 
 - **Gemini** (Google)
 - **Claude** (Anthropic)

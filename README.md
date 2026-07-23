@@ -125,7 +125,7 @@ Full license texts are in `src-tauri/licenses/`, and inside the app: "About" →
 
 ## Credits
 
-RenForge is developed by [foulnike](https://github.com/foulnike) in pair programming with AI assistants, honestly credited as co-authors:
+RenForge is developed by [foulnike](https://github.com/foulnike) in pair programming with AI assistants:
 
 - **Gemini** (Google)
 - **Claude** (Anthropic)
