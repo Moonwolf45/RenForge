@@ -3,7 +3,7 @@
     <!-- LEFT SECTION -->
     <div class="header-section">
       <template v-if="['dashboard', 'gallery', 'audio'].includes(currentMode)">
-        <div class="logo" style="margin-right: 15px; cursor: pointer; user-select: none;" @click="onLogoClick"><img :src="appLogo" class="logo-img" alt="" /><span class="logo-text"><span class="logo-ren">Ren</span><span class="logo-forge">Forge</span><sup class="version">1.2</sup></span></div>
+        <div class="logo" style="margin-right: 15px; cursor: pointer; user-select: none;" @click="onLogoClick"><img :src="appLogo" class="logo-img" alt="" /><span class="logo-text"><span class="logo-ren">Ren</span><span class="logo-forge">Forge</span><sup class="version">1.3</sup></span></div>
         
         <div class="popover-wrapper">
           <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}" :title="t('settings')"><Icon name="gear" :size="18" /></button>
