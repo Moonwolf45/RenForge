@@ -2,7 +2,7 @@
 
 [Русский](CHANGELOG.md) · **English**
 
-## [1.3.0] — in development
+## [1.3.0]
 
 ### Added
 - **Translation QA:** a single indicator in the editor header (errors / to review / all clear) with jumps to problem lines, highlighting of errors and warnings, and quick-fix buttons — strip a "stuck" AI prefix (like `[ENGINE]:`), restore lost leading tags, auto-wrap long interface strings; plus fix-the-whole-file in one click.
