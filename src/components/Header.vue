@@ -144,8 +144,16 @@
       </template>
       
       <template v-else-if="currentMode === 'editor'">
-        <button v-if="hasReview && !isEditorLoading" class="btn btn-outline review-jump-btn" @click="jumpToNextReview" :title="t('next_review')">{{ t('next_review') }} ({{ reviewCount }})</button>
-        <button v-if="hasErrors && !isEditorLoading" class="btn btn-outline error-jump-btn" @click="jumpToNextError" :title="t('next_error')">{{ t('next_error') }}</button>
+        <div class="popover-wrapper" v-if="!isEditorLoading" style="display:inline-flex;">
+          <button class="btn btn-secondary" :class="['qa-' + qaState, { active: activePopover === 'qa' }]" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('qa')" :title="t('qa_menu')"><Icon :name="qaIcon" :size="18" /></button>
+          <div v-if="activePopover === 'qa'" class="popover-menu popover-menu-sm popover-right">
+            <button v-if="hasErrors" class="dropdown-item-btn" @click="jumpToNextError(); activePopover = null">{{ t('next_error') }}</button>
+            <button v-if="hasReview" class="dropdown-item-btn" @click="jumpToNextReview(); activePopover = null">{{ t('next_review') }} ({{ reviewCount }})</button>
+            <button v-if="hasWarnDiag" class="dropdown-item-btn" @click="jumpToNextWarning(); activePopover = null">{{ t('next_warning') }}</button>
+            <button v-if="hasFixables" class="dropdown-item-btn" @click="fixFileAll(); activePopover = null">{{ t('diag_fix_file') }}</button>
+            <div v-if="!hasErrors && !hasReview && !hasWarnDiag && !hasFixables" class="dropdown-empty">{{ t('qa_clean') }}</div>
+          </div>
+        </div>
         
         <button v-if="!isEditorLoading" class="btn btn-secondary header-add-string" style="display:inline-flex; align-items:center; justify-content:center;" @click="showAddStringModal = true" :title="t('add_string')"><Icon name="plus" :size="18" /></button>
 
@@ -224,9 +232,10 @@ import {
   uiTheme, uiLang, targetLang, targetScript, sourceLang, currentMode, activePopover, isAiModalOpen,
   parsedBlocks, isEditorLoading, currentFilePath, showSourceModal, showAddStringModal, MANUAL_FILE, showAboutModal,
   projectPath, hiddenFiles, isProcessing, loadProjectSettings, getFileName, showMsg, showHidden,
-  availableLanguages, editorDirty, lastSavedAt, uiAccent, FUNNY_PROMPTS
+  availableLanguages, editorDirty, lastSavedAt, uiAccent, FUNNY_PROMPTS, scrollToBlock, editorResizeTick
 } from '../store.js';
 import { refreshProject, exportCSV, exportJSON, importCSV, importJSON, exportPO, importPO, saveFile, getBlockStatus } from '../actions.js';
+import { fixFile, hasBulkFixables, diagnose } from '../diagnostics.js';
 
 const predefinedLangs =['russian', 'english', 'spanish', 'french', 'german'];
 const targetLangSelect = ref(targetLang.value === '' ? '' : (predefinedLangs.includes(targetLang.value) ? targetLang.value : 'custom'));
@@ -239,6 +248,25 @@ watch(targetLang, (v) => {
 const hasErrors = computed(() => parsedBlocks.value.some(block => getBlockStatus(block) === 'error'));
 const reviewCount = computed(() => parsedBlocks.value.filter(block => getBlockStatus(block) === 'outdated').length);
 const hasReview = computed(() => reviewCount.value > 0);
+const hasFixables = computed(() => hasBulkFixables(parsedBlocks.value));
+// Состояние индикатора «Проверка»: ошибки -> !, предупреждения (к проверке/UI-варнинги) -> ?, иначе -> ✓.
+const hasWarnDiag = computed(() => parsedBlocks.value.some(b => diagnose(b).some(d => d.severity === 'warning')));
+const hasWarnings = computed(() => hasReview.value || hasWarnDiag.value);
+const qaState = computed(() => hasErrors.value ? 'error' : (hasWarnings.value ? 'warn' : 'ok'));
+const qaIcon = computed(() => hasErrors.value ? 'alert' : (hasWarnings.value ? 'help' : 'check'));
+
+function jumpToNextWarning() {
+  const b = parsedBlocks.value.find(x => diagnose(x).some(d => d.severity === 'warning'));
+  if (b) scrollToBlock(b.id);
+}
+
+// Массовая починка файла: безопасные (bulk) автофиксы по всем строкам — срезает прилипшие
+// префиксы-эхо и восстанавливает потерянные ведущие токены. Перенос UI (субъективный) — не в массовой.
+function fixFileAll() {
+  const n = fixFile(parsedBlocks.value);
+  if (n > 0) { editorDirty.value = true; editorResizeTick.value++; }
+  showMsg('success', t('diag_fixed_n').replace('{n}', n));
+}
 let reviewIdx = 0;
 
 function togglePopover(name) { activePopover.value = activePopover.value === name ? null : name; }
@@ -325,10 +353,7 @@ async function closeEditor() {
 
 function jumpToNextError() {
     const errBlock = parsedBlocks.value.find(b => getBlockStatus(b) === 'error');
-    if (errBlock) {
-        const el = document.getElementById('block-' + errBlock.id); 
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); 
-    }
+    if (errBlock) scrollToBlock(errBlock.id);
 }
 
 function jumpToNextReview() {
@@ -337,7 +362,6 @@ function jumpToNextReview() {
     if (reviewIdx >= blocks.length) reviewIdx = 0;
     const b = blocks[reviewIdx];
     reviewIdx++;
-    const el = document.getElementById('block-' + b.id);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollToBlock(b.id);
 }
 </script>

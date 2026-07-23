@@ -376,8 +376,111 @@ def extract_engine_common(game_dir, existing_texts):
                 "who": "[ENGINE]",
                 "what": what,
                 "prefix": None,
+                "source": "regex",
             })
     return out
+
+
+# === Multi-key delivery: alt-тексты из одноязычных источников ===
+# Порог доли идентичных строк, при котором два источника считаются ОДНИМ языком
+# (base-скрипт vs tl/<lang>, различающиеся лишь реформулировками). Ниже — разные языки.
+SAME_LANG_THRESHOLD = 0.5
+
+
+def _norm_txt(s):
+    return (s or "").strip()
+
+
+def _extract_id_text_map(files, limit=None):
+    """Строит {translation_id: text} по набору .rpyc через тот же AST-обход.
+    limit — обработать не более N файлов (для дешёвого сэмпл-детекта одноязычности)."""
+    m = {}
+    for i, fp in enumerate(files):
+        if limit is not None and i >= limit:
+            break
+        try:
+            tree, _is_legacy = load_ast(fp)
+        except Exception:
+            continue
+        if not tree:
+            continue
+        tmp = []
+        try:
+            explore_ast(tree, results=tmp)
+        except Exception:
+            continue
+        for s in tmp:
+            sid = s.get("id")
+            what = s.get("what")
+            if sid and what is not None and sid not in m:
+                m[sid] = what
+    return m
+
+
+def attach_alt_texts(input_dir, primary_files, primary_strings):
+    """Дописывает к строкам alt_texts — иные текстовые варианты той же строки (по
+    translation id) из ОДНОЯЗЫЧНЫХ сиблинг-источников (напр. base English + tl/english,
+    различающиеся реформулировками). Доставка регистрирует перевод под всеми вариантами,
+    поэтому строка матчится независимо от того, какой текст показан в рантайме.
+
+    Одноязычность определяется по доле идентичных строк на общих id (сэмпл), без определения
+    языка: реворд-overlay сохраняет большинство строк идентичными (доля высокая), другой
+    язык почти не даёт совпадений (доля ~0)."""
+    prim = {}
+    for s in primary_strings:
+        sid = s.get("id")
+        if sid and sid not in prim:
+            prim[sid] = _norm_txt(s.get("what"))
+    if not prim:
+        return
+
+    primary_set = set(primary_files)
+    same_lang_maps = []
+    for cand in scan_available_languages(input_dir):
+        try:
+            cand_files = collect_rpyc_files(input_dir, cand)[0]
+        except Exception:
+            continue
+        if not cand_files or set(cand_files) == primary_set:
+            continue  # тот же источник, что и основной — пропускаем
+        # Сэмпл-детект одноязычности (дёшево: несколько файлов).
+        sample = _extract_id_text_map(cand_files, limit=5)
+        shared = [sid for sid in sample if sid in prim]
+        if len(shared) < 10:
+            sample = _extract_id_text_map(cand_files, limit=25)
+            shared = [sid for sid in sample if sid in prim]
+        if not shared:
+            continue
+        identical = sum(1 for sid in shared if _norm_txt(sample[sid]) == prim[sid])
+        frac = identical / len(shared)
+        if frac >= SAME_LANG_THRESHOLD:
+            # Одноязычный источник — полный сбор его id->text.
+            same_lang_maps.append(_extract_id_text_map(cand_files))
+            print(f"[INFO] Alt-источник '{cand}': одноязычный (идентичных {frac:.0%}), +alt-ключи")
+
+    if not same_lang_maps:
+        return
+
+    tagged = 0
+    for s in primary_strings:
+        sid = s.get("id")
+        if not sid:
+            continue
+        prim_txt = _norm_txt(s.get("what"))
+        alts = []
+        for m in same_lang_maps:
+            cand_txt = m.get(sid)
+            if cand_txt is None:
+                continue
+            if _norm_txt(cand_txt) == prim_txt:
+                continue  # идентичен основному — доставлять как alt незачем
+            if cand_txt not in alts:
+                alts.append(cand_txt)
+        if alts:
+            s["alt_texts"] = alts
+            tagged += 1
+    if tagged:
+        print(f"[INFO] Alt-ключи проставлены для {tagged} строк (multi-key delivery)")
 
 
 def process_directory(input_dir: str, output_file: str, source_lang: str = "auto"):
@@ -421,15 +524,42 @@ def process_directory(input_dir: str, output_file: str, source_lang: str = "auto
             print(f"[INFO] .rpyc не найдены, парсим {len(rpy_files)} файлов .rpy напрямую")
             for filepath in rpy_files:
                 parse_rpy_file(filepath, extracted_data["strings"])
+            # Метка способа извлечения: regex-парсер по тексту .rpy (менее надёжен, чем AST).
+            for s in extracted_data["strings"]:
+                s.setdefault("source", "regex")
         else:
             print(f"[WARNING] Ни .rpyc, ни .rpy файлы не найдены!")
     else:
+        skipped_files = []
         for filepath in rpyc_files:
             tree, is_legacy = load_ast(filepath)
             if is_legacy:
                 extracted_data["is_legacy_format"] = True
             if tree:
-                explore_ast(tree, results=extracted_data["strings"])
+                # Изоляция ошибок: сбой explore_ast на ОДНОМ файле (нестандартный узел,
+                # RecursionError и т.п.) не должен ронять всё извлечение (иначе теряется
+                # ВЕСЬ результат — строки пишутся в JSON только после цикла). Копим во
+                # временный буфер и вливаем в общий список только при успехе — на валидных
+                # файлах порядок и содержимое вывода не меняются.
+                tmp = []
+                try:
+                    explore_ast(tree, results=tmp)
+                    extracted_data["strings"].extend(tmp)
+                except Exception as e:
+                    skipped_files.append(filepath)
+                    print(f"[WARN] Пропущен файл (сбой разбора AST): {filepath} -> {e!r}", file=sys.stderr)
+                    continue
+        if skipped_files:
+            print(f"[WARN] Пропущено файлов из-за ошибок разбора AST: {len(skipped_files)}", file=sys.stderr)
+        # Метка способа извлечения: AST скомпилированного .rpyc (надёжный путь).
+        for s in extracted_data["strings"]:
+            s.setdefault("source", "ast")
+        # Multi-key delivery: alt-тексты из одноязычных источников (base + tl/<same>).
+        # Обёрнуто в try/except — детект alt-ключей никогда не должен ломать извлечение.
+        try:
+            attach_alt_texts(input_dir, rpyc_files, extracted_data["strings"])
+        except Exception as e:
+            print(f"[WARN] Детект alt-ключей не удался: {e!r}", file=sys.stderr)
 
     # Игроцентричные строки самого движка из renpy/common (Сохранить/Выход/даты/скип…),
     # которых нет в game/. Извлекаем только при source=original (для перевода с оригинала);

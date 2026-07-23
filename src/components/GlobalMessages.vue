@@ -2,7 +2,7 @@
   <div class="toast-stack">
     <transition-group name="toast">
       <div v-for="tt in toasts" :key="tt.id" class="toast" :class="'toast-' + tt.type">
-        <span class="toast-ic"><Icon :name="tt.type === 'error' ? 'info' : 'check'" :size="16" :stroke-width="2.4" /></span>
+        <span class="toast-ic"><Icon :name="tt.type === 'error' ? 'info' : tt.type === 'warn' ? 'alert' : 'check'" :size="16" :stroke-width="2.4" /></span>
         <span class="toast-text">{{ tt.text }}</span>
         <button v-if="tt.sticky && isExporting" class="btn btn-secondary toast-cancel" @click="cancelExport">{{ t('cancel_btn') }}</button>
         <button class="toast-close" @click="removeToast(tt.id)" :title="t('close')"><Icon name="x" :size="14" /></button>
@@ -37,9 +37,11 @@ import Icon from './Icon.vue';
 }
 .toast-success { border-left-color: var(--success-text); }
 .toast-error { border-left-color: var(--error-text); }
+.toast-warn { border-left-color: #eab308; }
 .toast-ic { display: inline-flex; flex-shrink: 0; }
 .toast-success .toast-ic { color: var(--success-text); }
 .toast-error .toast-ic { color: var(--error-text); }
+.toast-warn .toast-ic { color: #eab308; }
 .toast-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
 .toast-cancel { padding: 3px 10px; font-size: 12px; flex-shrink: 0; }
 .toast-close { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 3px; display: inline-flex; border-radius: 5px; flex-shrink: 0; transition: 0.15s; }

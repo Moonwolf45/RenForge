@@ -5,7 +5,7 @@ import {
   projectPath, targetLang, sourceLang, isProcessing, projectFiles, charMap, fileStats, 
   showMsg, currentMode, isEditorLoading, currentFilePath, 
   parsedBlocks, hideTranslated, availableLanguages,
-  editorDirty, lastSavedAt, translationPairs, activePair, isExporting, MANUAL_FILE
+  editorDirty, lastSavedAt, translationPairs, activePair, isExporting, MANUAL_FILE, dupMap, diagnosticBuild
 } from './store.js';
 import { t } from './locales.js';
 
@@ -152,7 +152,35 @@ export async function prepareProject() {
     }
 
     await refreshProject();
+    checkLooseRpy();
     isProcessing.value = false;
+}
+
+// Стем пути без расширения .rpy/.rpyc, нормализованный (для сопоставления .rpy ↔ .rpyc).
+function rpyStem(p) {
+  return String(p).replace(/\\/g, '/').replace(/\.(rpyc|rpy)$/i, '').toLowerCase();
+}
+
+// Предупреждение: найдены «осиротевшие» .rpy (без парного .rpyc) — их экстрактор берёт
+// грубым регекс-фоллбэком или пропускает (в смешанной игре). Совет: запустить игру один
+// раз (движок скомпилирует .rpy→.rpyc), затем переизвлечь — тогда сработает точный AST.
+function checkLooseRpy() {
+  const pf = projectFiles.value || {};
+  const rpycStems = new Set((pf.rpyc_files || []).map(rpyStem));
+  const orphans = (pf.rpy_files || []).filter((p) => !rpycStems.has(rpyStem(p)));
+  if (orphans.length > 0) {
+    showMsg('warn', t('msg_loose_rpy').replace('{n}', orphans.length), 16000);
+  }
+}
+
+// Локализованная сводка сборки из счётчиков бэкенда (BuildCounts):
+// доставлено (диалоги/UI) / из них на проверку (перенос+память) / пропущено небезопасных.
+function buildReportMsg(res) {
+  if (!res) return '';
+  let s = t('build_delivered').replace('{say}', res.say ?? 0).replace('{ui}', res.ui ?? 0);
+  if (res.review > 0) s += ' ' + t('build_review').replace('{n}', res.review);
+  if (res.skipped_bad > 0) s += ' ' + t('build_skipped_bad').replace('{n}', res.skipped_bad);
+  return s;
 }
 
 export async function generateTranslations() {
@@ -162,10 +190,11 @@ export async function generateTranslations() {
     
     const res = await invoke('generate_translations', { 
       projectPath: projectPath.value, 
-      targetLang: targetLang.value
+      targetLang: targetLang.value,
+      diagnostic: diagnosticBuild.value
     });
     
-    showMsg('success', res); 
+    showMsg('success', buildReportMsg(res));
     await refreshProject();
   } catch (e) { 
     showMsg('error', e, 15000); 
@@ -185,7 +214,8 @@ export async function buildMod(fontRemaps = []) {
     // 1. Генерация файлов перевода
     const res = await invoke('generate_translations', { 
       projectPath: projectPath.value, 
-      targetLang: targetLang.value
+      targetLang: targetLang.value,
+      diagnostic: diagnosticBuild.value
     });
     
     // 2. Внедрение патча
@@ -195,7 +225,7 @@ export async function buildMod(fontRemaps = []) {
       fontRemaps: fontRemaps
     });
     
-    showMsg('success', t('msg_patch_applied'), 5000);
+    showMsg('success', t('msg_patch_applied') + ' ' + buildReportMsg(res), 8000);
     await refreshProject();
   } catch (e) { 
     showMsg('error', `${e}`, 15000); 
@@ -315,31 +345,21 @@ export async function migrateTranslations(oldProjectPath) {
 }
 
 // -- Редактор: Работа с базой данных --
-function extractTags(text) { return text.match(/(\[.*?\]|\{.*?\})/g) || []; }
-function extractInterps(text) { return text.match(/\[.*?\]/g) || []; }
-export function getOriginalTags(block) { return extractTags(block.original || ''); }
-export function getMissingTags(block) { 
-    if (!block.original || !block.translation) return [];
-    return extractTags(block.original).filter(tag => !block.translation.includes(tag)); 
-}
-// Лишние интерполяции [var] в переводе, которых НЕТ в оригинале. Это почти всегда
-// ошибка переводчика (несуществующая переменная -> Ren'Py KeyError при подстановке,
-// как было с маркером "[ПЕР]"). {текст-теги} НЕ проверяем — их можно добавлять (формат).
-export function getExtraInterps(block) {
-    if (!block.original || !block.translation) return [];
-    const orig = extractInterps(block.original);
-    return extractInterps(block.translation).filter(tag => !orig.includes(tag));
+// Диагностики строки вынесены в diagnostics.js (единый реестр + автофиксы). Здесь —
+// тонкие ре-экспорты, чтобы существующие импорты/шаблон не меняли путь.
+export { getOriginalTags, getMissingTags, getExtraInterps } from './diagnostics.js';
+import { blockStatus } from './diagnostics.js';
+export function getBlockStatus(block) { return blockStatus(block); }
+
+// Карта дубликатов оригинала (для пометок дубль/конфликт в редакторе). Фоново, не блокирует
+// открытие: обновляется при открытии файла и после сохранения. Ошибка не критична — пустая карта.
+export async function loadDupMap() {
+  try {
+    dupMap.value = await invoke('get_duplicate_originals', { projectPath: projectPath.value });
+  } catch (e) { dupMap.value = {}; }
 }
 
-export function getBlockStatus(block) {
-  if (getMissingTags(block).length > 0) return 'error'; 
-  if (getExtraInterps(block).length > 0) return 'error';
-  if (!block.translation || !block.translation.trim() || block.translation === block.original) return 'untranslated'; 
-  if (block.prev_original) return 'outdated'; // перенесён fuzzy-миграцией, требует проверки
-  return 'translated'; 
-}
-
-export async function openEditor(dbFilePath) {
+export async function openEditor(dbFilePath, opts = {}) {
   try {
     isEditorLoading.value = true;
     currentMode.value = 'editor';
@@ -352,11 +372,14 @@ export async function openEditor(dbFilePath) {
         filePath: dbFilePath 
     });
     
-    parsedBlocks.value = entries; 
+    parsedBlocks.value = entries;
+    loadDupMap(); // фоновая карта дубликатов → пометки строк в редакторе
     editorDirty.value = false;
     
-    if (entries.length === 0 && dbFilePath !== MANUAL_FILE) {
-        showMsg('error', 'В этом файле не найдено строк в базе. Выполните "Распаковать и Вскрыть всё".');
+    // opts.silent — открытие не-извлечённого файла намеренно (кнопка «Открыть исходник…»),
+    // тогда «нет строк» это норма, а не повод для предупреждения.
+    if (entries.length === 0 && dbFilePath !== MANUAL_FILE && !opts.silent) {
+        showMsg('error', t('msg_no_strings_in_file'));
     }
   } catch (e) { 
     showMsg('error', `Error: ${e}`); 
@@ -418,6 +441,7 @@ export async function addManualString(original, translation, type, toCurrentFile
     try {
       await invoke('upsert_translations_batch', { projectPath: projectPath.value, entries: [block] });
       fileStats.value = await invoke('get_translation_stats', { projectPath: projectPath.value });
+      loadPairs();
     } catch (e) { showMsg('error', `Error: ${e}`); return null; }
   }
   return id;
@@ -456,6 +480,7 @@ export async function deleteManualString(block) {
   try {
     fileStats.value = await invoke('get_translation_stats', { projectPath: projectPath.value });
   } catch (e) { /* не критично */ }
+  loadPairs();
   showMsg('success', t('manual_deleted'));
 }
 
@@ -479,12 +504,49 @@ export async function saveFile() {
     showMsg('success', t('msg_file_saved'));
     editorDirty.value = false;
     lastSavedAt.value = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    loadDupMap(); // обновить пометки дубликатов/конфликтов после сохранения
+    // Обновляем карточки пар: прогресс (translated/total) и статус «изменено» (built_dirty)
+    // меняются в БД при upsert, но без перечитывания пар индикатор оставался бы старым.
+    loadPairs();
     // Авто-наполнение Translation Memory переведёнными строками активной пары (фоном).
     invoke('tm_contribute', { projectPath: projectPath.value }).catch(() => {});
   } catch (e) { showMsg('error', `Error: ${e}`); }
 }
 
+// Пакетный экспорт строк активной пары во все форматы (CSV/JSON/PO), по файлу на исходник.
+// Работает по активной БД пары — вызывающий (PairsWidget) переключает пару перед вызовом.
+export async function exportAllStrings() {
+  if (!projectPath.value) return;
+  try {
+    const dir = await open({ directory: true, multiple: false, title: t('export_choose_dir') });
+    if (!dir) return;
+    const base = projectPath.value.split(/[/\\]/).filter(Boolean).pop() || 'game';
+    const safe = `${base} - RenForge strings`.replace(/[<>:"/\\|?*]/g, '_');
+    const outRoot = `${dir}/${safe}`;
+
+    isProcessing.value = true;
+    showMsg('success', t('exporting'), 0);
+    const res = await invoke('export_strings', {
+      projectPath: projectPath.value,
+      targetLang: targetLang.value || 'russian',
+      outRoot,
+    });
+    showMsg('success', t('export_strings_done').replace('{files}', res.files).replace('{strings}', res.strings), 12000);
+    try { await invoke('open_in_explorer', { path: outRoot }); } catch (e) { /* не критично */ }
+  } catch (e) {
+    showMsg('error', e.toString(), 12000);
+  } finally {
+    isProcessing.value = false;
+  }
+}
+
 // Экспорт / Импорт (почти без изменений, адаптирован под новые объекты)
+// Имя по умолчанию для одиночного экспорта = имя открытого файла + формат (script.rpy.po).
+function defaultExportName(ext) {
+    const base = (currentFilePath.value || 'export').split(/[/\\]/).filter(Boolean).pop() || 'export';
+    return `${base}.${ext}`;
+}
+
 export async function exportCSV() {
     let csvContent = "ID;Original;Translation\n";
     parsedBlocks.value.forEach(b => {
@@ -494,7 +556,7 @@ export async function exportCSV() {
         csvContent += `"${b.id}";"${orig}";"${tran}"\n`;
     });
     try {
-        const savePath = await save({ filters:[{ name: 'CSV', extensions:['csv'] }] });
+        const savePath = await save({ defaultPath: defaultExportName('csv'), filters:[{ name: 'CSV', extensions:['csv'] }] });
         if (savePath) { await invoke('write_text_file', { path: savePath, content: csvContent }); showMsg('success', t('msg_csv_exported')); }
     } catch (e) { showMsg('error', `Error: ${e}`); }
 }
@@ -526,7 +588,7 @@ export async function importCSV() {
 export async function exportJSON() {
     const data = parsedBlocks.value.map(b => ({ id: b.id, original: b.original, translation: b.translation }));
     try {
-        const savePath = await save({ filters:[{ name: 'JSON', extensions:['json'] }] });
+        const savePath = await save({ defaultPath: defaultExportName('json'), filters:[{ name: 'JSON', extensions:['json'] }] });
         if (savePath) { await invoke('write_text_file', { path: savePath, content: JSON.stringify(data, null, 2) }); showMsg('success', t('msg_json_exported')); }
     } catch (e) { showMsg('error', `Error: ${e}`); }
 }
@@ -605,7 +667,7 @@ export async function exportPO() {
         po += `msgstr "${poEscape(b.translation)}"\n\n`;
     });
     try {
-        const savePath = await save({ filters:[{ name: 'PO', extensions:['po'] }] });
+        const savePath = await save({ defaultPath: defaultExportName('po'), filters:[{ name: 'PO', extensions:['po'] }] });
         if (savePath) { await invoke('write_text_file', { path: savePath, content: po }); showMsg('success', t('msg_po_exported')); }
     } catch (e) { showMsg('error', `Error: ${e}`); }
 }

@@ -16,6 +16,12 @@
         <button class="btn btn-secondary gi-update-btn" @click="showUpdateModal = true" :title="t('update_title')"><Icon name="undo" :size="15" /> {{ t('update_btn') }}</button>
       </div>
 
+      <!-- ПРЕДУПРЕЖДЕНИЕ О МУЛЬТИЯЗЫЧНОЙ КОЛЛИЗИИ (roadmap 1.2) -->
+      <div v-if="targetLangCollision" class="lang-collision-bar">
+        <Icon name="alert" :size="16" />
+        <span>{{ collisionMsg }}</span>
+      </div>
+
       <!-- РАБОЧИЕ ПРОСТРАНСТВА (ПАРЫ ЯЗЫКОВ) -->
       <PairsWidget />
 
@@ -79,6 +85,8 @@
           </div>
           <div class="pipe-actions">
             <button class="btn btn-secondary icon-only-btn" @click="showDeliveryHooksModal = true" :title="t('hooks_title')"><Icon name="code" :size="16" /></button>
+            <button class="btn btn-secondary icon-only-btn" :class="{ active: diagnosticBuild }" @click="diagnosticBuild = !diagnosticBuild" :title="t('diag_build')"><Icon name="eye" :size="16" /></button>
+            <button class="btn btn-secondary icon-only-btn" @click="showUncoveredModal = true" :title="t('uncovered_title')"><Icon name="search" :size="16" /></button>
             <button class="btn btn-secondary icon-only-btn" :class="{ active: showFontPanel }" @click="showFontPanel = !showFontPanel" :title="t('fonts')"><Icon name="font" :size="16" /></button>
             <button class="btn btn-primary pipe-btn" :disabled="!extracted || isProcessing" @click="doBuildMod">{{ t('build_mod_btn') }}</button>
           </div>
@@ -166,6 +174,7 @@
           </div>
           <div class="files-toolbar-right">
             <button class="btn btn-secondary" @click="openEditor(MANUAL_FILE)" :disabled="isProcessing" :title="t('manual_strings_hint')" style="display:inline-flex; align-items:center; gap:5px;"><Icon name="plus" :size="14" /> {{ t('manual_strings_file') }}</button>
+            <button class="btn btn-secondary" @click="showFilesModal = true" :disabled="isProcessing" :title="t('open_source_file_hint')" style="display:inline-flex; align-items:center; gap:5px;"><Icon name="file" :size="14" /> {{ t('open_source_file') }}</button>
             <label class="toggle-hidden" v-if="hiddenFiles.length > 0" style="margin:0; font-size:12px;"><input type="checkbox" v-model="showHidden"> {{ t('show_hidden') }}</label>
             <select class="settings-select" v-model="fileSort" style="width: auto; padding: 5px 8px; font-size: 12px;">
               <option value="name">{{ t('sort_name') }}</option>
@@ -221,13 +230,17 @@ import EmptyState from './EmptyState.vue';
 import {
   projectPath, isProcessing, targetLang, sourceLang, targetScript as targetScriptSetting, hiddenFiles, completedFiles,
   showHidden, showFontPanel, getFileName, getFolderFromPath, fileStats, MANUAL_FILE, showDeliveryHooksModal,
+  showSourceModal, showFilesModal, showUncoveredModal, diagnosticBuild, targetLangCollision,
   showMsg, searchQuery, searchResults, fileNotes, showUpdateModal, showTmModal,
+  scrollToBlock,
   hiddenImages, hiddenAudio, hiddenFolders
 } from '../store.js';
 import { prepareProject, buildMod, openEditor, tmFill } from '../actions.js';
 
 const projectFonts = ref([]);
 const langsReady = computed(() => !!sourceLang.value && !!targetLang.value);
+// Текст предупреждения о мультиязычной коллизии (roadmap 1.2): подставляем имя языка в {lang}.
+const collisionMsg = computed(() => t('lang_collision_warn').replace(/\{lang\}/g, targetLang.value));
 
 // Память переводов: показываем размер базы рядом с заголовком панели.
 const tmCount = ref(0);
@@ -438,10 +451,8 @@ async function handleSearch() {
 async function jumpToFile(result) {
   await openEditor(result.file_path);
   searchQuery.value = ''; searchResults.value = [];
-  setTimeout(() => {
-    const el = document.getElementById('block-' + result.id);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, 500);
+  // Даём редактору отрисовать блоки, затем центрируемся с финализацией высот.
+  setTimeout(() => scrollToBlock(result.id), 500);
 }
 
 // Дефолтный режим для шрифта по текущему целевому языку:
@@ -518,6 +529,14 @@ onMounted(() => { loadAssetStats(); loadGameMeta(); loadProjectFonts(); loadTmCo
 </script>
 
 <style scoped>
+.lang-collision-bar {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin: 0 0 16px; padding: 11px 16px; border-radius: 10px;
+  background: color-mix(in srgb, #eab308 12%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, #eab308 45%, transparent);
+  color: var(--text-secondary); font-size: 12.5px; line-height: 1.45;
+}
+.lang-collision-bar :deep(svg) { color: #eab308; flex: 0 0 auto; margin-top: 1px; }
 .tm-bar {
   display: flex;
   align-items: center;

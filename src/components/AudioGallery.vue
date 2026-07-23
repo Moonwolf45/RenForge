@@ -20,7 +20,14 @@
       <main class="media-main">
           <div class="gallery-header">
               <h2>{{ t('audio') }} <span style="color: var(--text-muted); font-weight: normal; font-size: 14px; margin-left: 5px;">› {{ audioSelectedFolder === '' ? t('all_folders') : audioSelectedFolder }}</span></h2>
-              <div class="gallery-actions" style="display: flex; gap: 15px;">
+              <div class="gallery-actions" style="display: flex; gap: 15px; align-items: center;">
+                  <div class="audio-volume" :title="t('volume')">
+                      <button class="icon-text-btn" @click="toggleMute" :title="audioVolume === 0 ? t('volume_unmute') : t('volume_mute')">
+                          <Icon :name="audioVolume === 0 ? 'volume-x' : 'volume'" :size="18" />
+                      </button>
+                      <input type="range" min="0" max="1" step="0.01" v-model.number="audioVolume" class="audio-volume-range" />
+                      <span class="audio-volume-val">{{ Math.round(audioVolume * 100) }}%</span>
+                  </div>
                   <label class="toggle-hidden" style="margin: 0; align-items: center; display: flex;" v-if="hiddenAudio.length > 0 || hiddenFolders.length > 0">
                     <input type="checkbox" v-model="showHiddenMedia">
                     {{ t('show_hidden') }}
@@ -37,7 +44,7 @@
               <div class="gallery-grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
                   <div class="gallery-card" v-for="aud in paginatedAudio" :key="aud.rel_path" style="min-height: auto;" :data-relpath="aud.rel_path" :class="{ 'is-hidden': hiddenAudio.includes(aud.rel_path), 'drag-over': dragOverPath === aud.rel_path }">
                       <div style="padding: 15px 15px 10px; background: var(--bg-panel); border-bottom: 1px solid var(--border-main); text-align: center; position: relative;">
-                          <audio controls controlsList="nodownload" :src="getAudioSrc(aud)" @play="onAudioPlay" style="width: 100%; height: 36px; outline: none;"></audio>
+                          <audio controls controlsList="nodownload" :src="getAudioSrc(aud)" @play="onAudioPlay" @volumechange="onAudioVolumeChange" style="width: 100%; height: 36px; outline: none;"></audio>
                           <div v-if="aud.is_translated" class="status-badge status-done img-badge" style="position: absolute; top: 10px; right: 10px; margin: 0;">{{ t('status_translated') }}</div>
                       </div>
                       <div style="padding: 12px; background: var(--bg-app); border-bottom: 1px solid var(--border-main); flex: 1; display: flex; flex-direction: column;">
@@ -78,7 +85,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -93,6 +100,41 @@ const audioSelectedFolder = ref('');
 const audioCurrentPage = ref(1);
 const audioItemsPerPage = 100;
 const isAudioLoading = ref(false);
+
+// --- Единая громкость для всех плееров (синхронизируется в обе стороны, хранится в localStorage) ---
+const VOLUME_KEY = 'renforge_audio_volume';
+function loadVolume() {
+    const v = parseFloat(localStorage.getItem(VOLUME_KEY));
+    return (isNaN(v) || v < 0 || v > 1) ? 1 : v;
+}
+const audioVolume = ref(loadVolume());
+let lastNonZeroVolume = audioVolume.value > 0 ? audioVolume.value : 1;
+
+// Применяет текущую громкость ко всем плеерам на странице. Сравнение по допуску, чтобы
+// не гонять лишние присваивания и не зацикливать событие volumechange.
+function applyVolumeToAll() {
+    document.querySelectorAll('audio').forEach(a => {
+        if (Math.abs(a.volume - audioVolume.value) > 0.001) a.volume = audioVolume.value;
+        a.muted = audioVolume.value === 0;
+    });
+}
+
+watch(audioVolume, (v) => {
+    if (v > 0) lastNonZeroVolume = v;
+    localStorage.setItem(VOLUME_KEY, String(v));
+    applyVolumeToAll();
+});
+
+function toggleMute() {
+    audioVolume.value = audioVolume.value === 0 ? lastNonZeroVolume : 0;
+}
+
+// Штатный регулятор громкости конкретного плеера изменил значение → поднимаем его в общий
+// ползунок (watch затем разольёт по остальным плеерам). Допуск гасит обратную волну событий.
+function onAudioVolumeChange(e) {
+    const v = e.target.muted ? 0 : e.target.volume;
+    if (Math.abs(v - audioVolume.value) > 0.005) audioVolume.value = v;
+}
 
 // --- Drag&drop аудиофайлов из ОС ---
 const dragOverPath = ref(null);
@@ -184,6 +226,9 @@ const paginatedAudio = computed(() => {
     return filteredAudio.value.slice(start, start + audioItemsPerPage);
 });
 
+// Новые отрендеренные плееры (пагинация/фильтр/смена страницы) получают текущую громкость.
+watch(paginatedAudio, () => { nextTick(applyVolumeToAll); });
+
 function validateAudioPage() {
     let p = parseInt(audioCurrentPage.value);
     if (isNaN(p) || p < 1) p = 1;
@@ -199,6 +244,8 @@ function getAudioSrc(aud) {
 // Одновременно играет только один плеер: при старте паузим все остальные
 function onAudioPlay(e) {
     document.querySelectorAll('audio').forEach(a => { if (a !== e.target) a.pause(); });
+    e.target.volume = audioVolume.value;
+    e.target.muted = audioVolume.value === 0;
 }
 
 function toggleHideFolder(folder) {

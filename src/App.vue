@@ -16,12 +16,14 @@
     <AddStringModal v-if="showAddStringModal" />
     <DeliveryHooksModal v-if="showDeliveryHooksModal" />
     <AboutModal v-if="showAboutModal" />
+    <FilesModal v-if="showFilesModal" />
+    <UncoveredModal v-if="showUncoveredModal" />
   </div>
 </template>
 
 <script setup>
 import { onMounted, onUnmounted, computed } from 'vue';
-import { uiTheme, currentMode, activePopover, isAiModalOpen, showUpdateModal, showTmModal, showSourceModal, showAddStringModal, showDeliveryHooksModal, showAboutModal, uiAccent, resolveAccent, contrastFor } from './store.js';
+import { uiTheme, currentMode, activePopover, isAiModalOpen, showUpdateModal, showTmModal, showSourceModal, showAddStringModal, showDeliveryHooksModal, showAboutModal, showFilesModal, showUncoveredModal, uiAccent, resolveAccent, contrastFor } from './store.js';
 
 import Header from './components/Header.vue';
 import GlobalMessages from './components/GlobalMessages.vue';
@@ -32,6 +34,8 @@ import SourceViewer from './components/SourceViewer.vue';
 import AddStringModal from './components/AddStringModal.vue';
 import DeliveryHooksModal from './components/DeliveryHooksModal.vue';
 import AboutModal from './components/AboutModal.vue';
+import FilesModal from './components/FilesModal.vue';
+import UncoveredModal from './components/UncoveredModal.vue';
 import Dashboard from './components/Dashboard.vue';
 import Editor from './components/Editor.vue';
 import ImageGallery from './components/ImageGallery.vue';

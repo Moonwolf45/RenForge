@@ -101,7 +101,8 @@ fn main() {
         "generate" => generate_translations_core(
             project.to_string(),
             args.get(3).cloned().unwrap_or_else(|| "russian".to_string()),
-        ),
+            false,
+        ).map(|c| format!("say={} ui={} review={} skipped_bad={}", c.say, c.ui, c.review, c.skipped_bad)),
         "patch" => patch(project, args.get(3).map(|s| s.as_str()).unwrap_or("russian")).map(|_| "патч применён".to_string()),
         "migrate" => {
             let old = args.get(3).map(|s| s.as_str()).unwrap_or("");
@@ -120,8 +121,8 @@ fn main() {
                     let s = set_translations(project, ru)?;
                     println!("[set] {}", s);
                 }
-                let g = generate_translations_core(project.to_string(), lang.clone())?;
-                println!("[generate] {}", g);
+                let g = generate_translations_core(project.to_string(), lang.clone(), false)?;
+                println!("[generate] say={} ui={} review={} skipped_bad={}", g.say, g.ui, g.review, g.skipped_bad);
                 patch(project, &lang)?;
                 println!("[patch] ok");
                 stats(project)

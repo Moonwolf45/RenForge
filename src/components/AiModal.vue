@@ -134,6 +134,7 @@ import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isAiModalOpen, parsedBlocks, targetLang, glossary, charMap, showMsg, currentFilePath, editorDirty, editorResizeTick } from '../store.js';
 import { getBlockStatus } from '../actions.js';
+import { stripLeadingPrefix } from '../diagnostics.js';
 import { t } from '../locales.js';
 import Icon from './Icon.vue';
 
@@ -330,17 +331,6 @@ async function prepareAiBatch() {
     } catch (e) { showMsg('error', t('msg_copy_err')); }
 }
 
-function stripSpeakerEcho(text, names) {
-    for (const n of names) {
-        if (!n) continue;
-        const e = n.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (!e) continue;
-        const re = new RegExp(`^\\s*\\[\\s*${e}\\s*:?\\s*\\]\\s*:?\\s*`, 'i');
-        if (re.test(text)) return text.replace(re, '').trim();
-    }
-    return text;
-}
-
 function parseAiResponseAndApply(text) {
     const batchIds = _batchStore.ids;
     if (!batchIds.length) return 0;
@@ -375,8 +365,12 @@ function parseAiResponseAndApply(text) {
         if (entries[index]) {
             const block = parsedBlocks.value.find(b => b.id === id);
             if (block) {
-                const who = (block.who || '').trim();
-                block.translation = stripSpeakerEcho(entries[index], [who, charMap.value[who], speakerOf(block)]);
+                // Авто-зачистка прилипшего ведущего префикса-эхо ([ENGINE]: / [name]:) —
+                // универсально, во всех пачках; срезаем только если такого бракета нет в
+                // начале оригинала (легитимный ведущий [var] не трогаем).
+                const raw = entries[index];
+                const stripped = stripLeadingPrefix(raw, block.original);
+                block.translation = stripped != null ? stripped : raw;
                 appliedCount++;
             }
         }

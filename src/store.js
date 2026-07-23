@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 
 // Настройки приложения
 export const uiLang = ref(localStorage.getItem('renforge_ui_lang') || 'en');
@@ -20,6 +20,9 @@ export const ACCENTS = {
   green:  { c: '#52a06b', h: '#448d5c' },
 };
 export const uiAccent = ref(localStorage.getItem('renforge_ui_accent') || 'blue');
+// Диагностическая сборка (opt-in, roadmap 0.1): доставка логирует непокрытый в игре текст,
+// чтобы находить пробелы извлечения/доставки. Только для теста — не для релизного мода.
+export const diagnosticBuild = ref(localStorage.getItem('renforge_diagnostic_build') === '1');
 
 // Затемнение hex-цвета для производного hover-варианта (кастомный акцент).
 export function darkenHex(hex, f = 0.84) {
@@ -75,9 +78,25 @@ export const showSourceModal = ref(false);
 export const showAddStringModal = ref(false);
 export const showDeliveryHooksModal = ref(false);
 export const showAboutModal = ref(false);
+// Модалка «Файлы игры» — обзор всех найденных файлов со статусом (извлечён/не извлечён/др. язык).
+export const showFilesModal = ref(false);
+// Модалка «Непокрытый текст» — отчёт диагностики покрытия (что видно в игре, но не в базе).
+export const showUncoveredModal = ref(false);
 // Блок ручной строки, открытый на редактирование (null = режим добавления).
 export const manualEditTarget = ref(null);
 export const availableLanguages = ref([]);
+
+// Роадмап 1.2: целевой язык совпадает со ВСТРОЕННЫМ языком игры (target ∈ available_languages).
+// Тогда наш перевод может наложиться на штатную локализацию, если игрок выберет этот язык в
+// меню игры (или игра стартует на нём). Информационное предупреждение — доставку НЕ меняем.
+export const targetLangCollision = computed(() => {
+  const tgt = (targetLang.value || '').trim().toLowerCase();
+  if (!tgt) return false;
+  return availableLanguages.value.some((l) => {
+    const x = (l || '').trim().toLowerCase();
+    return x && x !== 'original' && x === tgt;
+  });
+});
 
 // Псевдо-файл для ручных строк (то, что юзер увидел в игре, но экстрактор не достал).
 // Стабильный языконезависимый ключ; в UI показывается как t('manual_strings_file').
@@ -144,6 +163,11 @@ export const isExporting = ref(false);
 export const projectFiles = ref({ rpa_files:[], rpyc_files:[], rpy_files:[], tl_files:[] });
 export const fileStats = ref({});
 export const charMap = ref({});
+// Карта дубликатов оригинала для пометки строк в редакторе: original -> {count, variants}.
+// count = сколько строк проекта имеют этот оригинал (>1 = есть дублёры, перевод общий);
+// variants = сколько среди них РАЗНЫХ непустых переводов (>1 = конфликт: доставится один).
+// Грузится фоново при открытии файла и после сохранения (get_duplicate_originals).
+export const dupMap = ref({});
 
 // Редактор переводов
 export const parsedBlocks = ref([]);
@@ -152,6 +176,38 @@ export const rawFileText = ref('');
 export const isEditorLoading = ref(false);
 export const hideTranslated = ref(false);
 export const focusedBlockId = ref(null);
+// Кратковременная подсветка («вспышка») целевого блока при навигации (поиск/левая колонка).
+export const flashBlockId = ref(null);
+let _flashTimer = null;
+export function flashBlock(id) {
+  // Сброс в null + rAF-переустановка, чтобы CSS-анимация перезапускалась даже при
+  // повторной навигации к той же строке.
+  flashBlockId.value = null;
+  requestAnimationFrame(() => {
+    flashBlockId.value = id;
+    if (_flashTimer) clearTimeout(_flashTimer);
+    _flashTimer = setTimeout(() => { flashBlockId.value = null; }, 1600);
+  });
+}
+
+// Центрировать редактор на блоке id + подсветить. Перед скроллом доводим высоту ВСЕХ
+// полей перевода до финальной: ленивый авторост (IntersectionObserver) иначе растягивает
+// соседние textarea уже во время прокрутки и цель уезжает — навигация промахивается
+// (напр. строка 217 кидала в район 330). Двойной rAF: сперва применяем высоты, затем,
+// когда раскладка пересчитана, центрируем.
+export function scrollToBlock(id) {
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.editor-panel .transparent-input').forEach((el) => {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    });
+    requestAnimationFrame(() => {
+      const el = document.getElementById('block-' + id);
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
+      flashBlock(id);
+    });
+  });
+}
 export const newTerm = ref({ original: '', translation: '' });
 // Несохранённые изменения в редакторе + время последнего сохранения
 export const editorDirty = ref(false);
@@ -211,6 +267,7 @@ watch(hiddenFolders, (val) => { const k = getProjectKey('renforge_hidden_folders
 // Пер-проектное сохранение языков (плюс глобальный дефолт для новых проектов)
 watch(sourceLang, (val) => { const k = getProjectKey('renforge_source_lang'); if(k) localStorage.setItem(k, val); localStorage.setItem('renforge_source_lang', val); });
 watch(targetLang, (val) => { const k = getProjectKey('renforge_target_lang'); if(k) localStorage.setItem(k, val); localStorage.setItem('renforge_target_lang', val); });
+watch(diagnosticBuild, (v) => localStorage.setItem('renforge_diagnostic_build', v ? '1' : '0'));
 
 export function getFileName(fullPath) { 
   if (!fullPath) return '';
