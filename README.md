@@ -122,3 +122,12 @@ Third-party components:
 | [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT (`codegen.py` — BSD-3) | `.rpyc` decompilation (source viewer) |
 
 Full license texts are in `src-tauri/licenses/`, and inside the app: "About" → "Open licenses folder".
+
+## Credits
+
+RenForge is developed by [foulnike](https://github.com/foulnike) in pair programming with AI assistants, honestly credited as co-authors:
+
+- **Gemini** (Google)
+- **Claude** (Anthropic)
+
+All AI-written code is reviewed and tested by the author.
