@@ -1,7 +1,8 @@
 # Worklog
 
-Хронология работ. Актуальный статус: **v1.2.0 в проде, 1.3 в активной разработке.**
-Всё ниже по 1.3 — **НЕ закоммичено** (владелец коммитит сам).
+Хронология работ. Актуальный статус: **v1.2.0 в проде, 1.3.0 готовится к релизу (dev).**
+Версия уже забампана и закоммичена (README/Cargo.toml×2/tauri.conf.json/package.json/Header.vue/
+AboutModal.vue/version_info.txt сайдкара); CHANGELOG 1.3.0 больше не «в разработке».
 
 ## Не закоммичено (в работе, 1.3)
 
@@ -124,8 +125,25 @@ App/main), locales.js (все 6 языков), все 18 `.vue`-компонен
 - `02`: `detect_engine_version`, `GAME_META`/`capture_game_meta` (имя/версия игры с эвристикой),
   извлечение legacy `displayDict` (katawa-style) — при том что доставка на такие движки не реализована.
 
-**Реальные кандидаты на чистку** (детали — в разделе ниже): мёртвый Vue Flow (CSS+deps),
-`extract_targeted_use_args` (не вызывается), лишний импорт `clean_filename`, устаревший doc-`FontInfo`.
+**Реальные кандидаты на чистку** (детали — в разделе ниже): ~~мёртвый Vue Flow (CSS+deps)~~ —
+**удалено** (коммит `44d304a`), ~~`extract_targeted_use_args` (не вызывается)~~ — **удалено**,
+~~лишний импорт `clean_filename`~~ — **удалено**, ~~устаревший doc-`FontInfo`~~ — **актуализирован**
+тем же коммитом. Весь список чистки из аудита закрыт.
+
+### Roadmap 1.3 — репорт пропущенных файлов экстрактора (Option B, реализовано в исходниках)
+Экстрактор (`main.py::process_directory`) теперь кладёт `skipped_files` (пути относительно
+`game/`, нормализованные слэши) в выходной JSON — и на сбой `explore_ast`, и на пустой
+`load_ast` (раньше молча терялся, не считался вообще). `ExtractedData.skipped_files: Vec<String>`
+(models.rs, `#[serde(default)]` — обратная совместимость со старым сайдкаром, который поле не
+пишет). `extract_and_ingest_project` (lib.rs) сменил тип возврата с голого `i64` на
+`ExtractResult { total, skipped_files }` — читает оба поля из ОДНОГО разбора JSON (не два раза).
+Фронт (`actions.js::prepareProject`) читает `result.total` вместо `total`, и при непустом
+`skipped_files` кроме обычного успех-тоста показывает `warn`-тост со списком (первые 5 + «…»).
+Локаль `msg_extractor_skipped` ×6. **Проверено:** `cargo check` (полный workspace, включая GUI-
+таргет — на Linux потребовались системные GTK/OpenSSL dev-пакеты и временные заглушки под sidecar-
+бинари для линуксового триплета, удалены после проверки, не коммитятся); `vite build` фронта —
+чисто. **Требует пересборки сайдкара** (`rpyc_extractor.exe`, PyInstaller/Windows) владельцем
+перед тестом/коммитом — правка тронула `main.py`.
 
 **Перед релизом 1.3 — бамп версии в 5 местах** (сейчас везде `1.2` / `1.2.0`):
 `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
@@ -195,19 +213,19 @@ bench не поправлен (кандидат на отдельную мелк
 - **~~Дубли в `unpickler.py`~~ — ОПРОВЕРГНУТО (аудит):** `explore_ast` и
   `extract_layeredimage_strings` определены по ОДНОМУ разу (строки 594 и 564). Дублей нет —
   прежнее подозрение было ошибкой наблюдения (рекурсивные вызовы приняли за определения).
-- **Мёртвый код в экстракторе (реальный):** `extract_targeted_use_args` (ФИКС №3, unpickler.py)
-  нигде не вызывается — вытеснена инлайновой обработкой `SLUse` в `explore_ast`;
-  `clean_filename` — лишний импорт в main.py (используется только внутри unpickler.py).
-  Безопасно удалить.
-- **Мёртвый Vue Flow (подтверждено аудитом — координаты):** CSS-блок «VUE FLOW OVERRIDES»
+- **Мёртвый код в экстракторе — УДАЛЁН:** `extract_targeted_use_args` (ФИКС №3, unpickler.py) не
+  вызывалась нигде — вытеснена инлайновой обработкой `SLUse` в `explore_ast`; `clean_filename` —
+  лишний импорт в main.py (используется только внутри unpickler.py) — тоже удалён.
+- **~~Мёртвый Vue Flow~~ — УДАЛЕНО (подтверждено аудитом — координаты):** был CSS-блок «VUE FLOW OVERRIDES»
   в `src/assets/style.css` (строки **565–598**): `.renforge-flow`, `.vue-flow__*`
   (node/minimap*/controls*), `.custom-node`, `.node-faded/-title/-content/-file/-empty`,
   `.interactive-node`, `.file-tag/-warning/-error/-success`, `.tag-tl`, `.title-sync/-warn`,
   `.warning-icon/.success-icon` + 4 зависимости package.json
   (`@vue-flow/background|controls|core|minimap`). Grep-проверено: НИ ОДИН класс блока и ни один
-  `@vue-flow` не используется в `.vue`/`.js`. Граф файлов заменён дашбордом в 1.2. Удаляется целиком.
-- **Устаревший doc-комментарий `FontInfo` (models.rs):** перечисляет 9 письменностей, а
-  `font_scripts` (lib.rs) фактически пробует 26 — обновить комментарий под реальность.
+  `@vue-flow` не используется в `.vue`/`.js`. Граф файлов заменён дашбордом в 1.2. Удалено целиком
+  (коммит `44d304a`).
+- **~~Устаревший doc-комментарий `FontInfo`~~ — актуализирован** тем же коммитом (`44d304a`):
+  перечисляет 9 письменностей, а `font_scripts` (lib.rs) фактически пробует 26.
 
 ## Идеи/фичи в очереди
 См. «Отложенные пункты» в `06-decisions-log.md`.

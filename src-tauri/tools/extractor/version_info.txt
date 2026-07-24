@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'foulnike'),
           StringStruct('FileDescription', "RenForge Extractor (Ren'Py AST extractor + decompile via unrpyc)"),
-          StringStruct('FileVersion', '1.2.0.0'),
+          StringStruct('FileVersion', '1.3.0.0'),
           StringStruct('InternalName', 'rpyc_extractor'),
           StringStruct('LegalCopyright', "RenForge (c) foulnike, GPL-3.0. Bundles unrpyc (MIT) (c) Yuri K. Schlesner, CensoredUsername, Jackmcbarn. See licenses/."),
           StringStruct('OriginalFilename', 'rpyc_extractor.exe'),
           StringStruct('ProductName', 'RenForge'),
-          StringStruct('ProductVersion', '1.2.0.0')
+          StringStruct('ProductVersion', '1.3.0.0')
         ]
       )
     ]),

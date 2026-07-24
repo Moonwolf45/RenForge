@@ -57,8 +57,8 @@ Platform: **Windows x64**. License: **GPL-3.0**.
 
 From the release page:
 
-- **`RenForge_v1.2.0_Windows_Installer.msi`** — installer (MSI).
-- **`RenForge_v1.2.0_Portable.zip`** — portable build.
+- **`RenForge_v1.3.0_Windows_Installer.msi`** — installer (MSI).
+- **`RenForge_v1.3.0_Portable.zip`** — portable build.
 
 The WebView2 runtime is bundled into the installer (works offline).
 

@@ -13,10 +13,15 @@
 - **`scan_project(path, target_lang) -> ProjectFiles` (command)** — обход `game/` (walkdir)
   в списки .rpa/.rpyc/.rpy/tl. tl определяется вхождением `/tl/<lang>/` (unix и windows);
   .rpyc из tl отбрасываются (оверлей). В spawn_blocking.
-- **`extract_and_ingest_project(project_path, source_lang?, target_lang?) -> i64` (command)**
+- **`extract_and_ingest_project(project_path, source_lang?, target_lang?) -> ExtractResult` (command)**
   — запускает сайдкар (`--dir --out --source-lang`), затем ingest. `source_lang` def "auto"
   резолвится в конкретный язык; **активная пара ставится через `db::set_active_pair` ДО
   ingest** (данные лягут в нужную БД). После — пишет target_language в project_meta.
+  Возвращает `ExtractResult {total, skipped_files}` (roadmap 1.3, было — голый `i64`):
+  `total` = строк в БД активной пары после ingest, `skipped_files` = пути (относительно `game/`)
+  файлов, которые экстрактор не смог разобрать — читается из ОДНОГО разбора `ExtractedData`
+  вместе с `resolved_source` (не парсим JSON дважды). `#[serde(default)]` на поле в
+  `ExtractedData` — старый (не пересобранный) сайдкар его не пишет, не ошибка.
 - **`discover_source_languages(project_path) -> Vec<String>` (command)** — быстрое
   определение языков-источников БЕЗ полного извлечения (решает «курицу и яйцо» для селектора
   «Переводить с»). Экстрактор `--list-languages`, парсит строку `RENFORGE_LANGS:`.
@@ -244,7 +249,10 @@
 - **`ExtractedString`** — от экстрактора: block_type(type)/id/file/line/who/what/prefix/
   **source**/**alt_texts** (`Vec<String>`, serde default — варианты для multi-key).
 - **`ExtractedData`** — project_name/is_legacy_format/available_languages/source_language/
-  game_name/game_version/engine_version/strings.
+  game_name/game_version/engine_version/strings/**skipped_files** (`Vec<String>`, serde default —
+  roadmap 1.3, старый сайдкар не пишет).
+- **`ExtractResult`** — total(i64)/skipped_files(`Vec<String>`) — возврат команды
+  `extract_and_ingest_project` (roadmap 1.3; раньше был голый `i64`).
 - **`FontInfo`** — rel_path/name/scripts. **`FontRemap`** — source/target(Option).
 - **`DbEntry`** — id/block_type/file_path/line_number/who/original/translation/status/prefix/
   prev_original/channel/**confirmed**/**source**/**alt_texts** (последние — serde default;

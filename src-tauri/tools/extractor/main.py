@@ -6,7 +6,7 @@ import re
 import hashlib
 
 # Импортируем инструменты из нашего второго файла
-from unpickler import load_ast, explore_ast, GAME_META, clean_filename
+from unpickler import load_ast, explore_ast, GAME_META
 
 
 def _unrpyc_dirs():
@@ -505,7 +505,8 @@ def process_directory(input_dir: str, output_file: str, source_lang: str = "auto
         "game_name": None,
         "game_version": None,
         "engine_version": detect_engine_version(input_dir),
-        "strings": []
+        "strings": [],
+        "skipped_files": []
     }
     GAME_META.clear()
     
@@ -549,8 +550,21 @@ def process_directory(input_dir: str, output_file: str, source_lang: str = "auto
                     skipped_files.append(filepath)
                     print(f"[WARN] Пропущен файл (сбой разбора AST): {filepath} -> {e!r}", file=sys.stderr)
                     continue
+            else:
+                # load_ast вернул пустое дерево (битый/нераспознанный .rpyc) — файл молча
+                # выпадал из подсчёта; теперь тоже считаем и репортим (roadmap 1.3).
+                skipped_files.append(filepath)
+                print(f"[WARN] Пропущен файл (не удалось загрузить AST): {filepath}", file=sys.stderr)
         if skipped_files:
             print(f"[WARN] Пропущено файлов из-за ошибок разбора AST: {len(skipped_files)}", file=sys.stderr)
+            # Относительные пути (от input_dir) — тем же форматом, что использует остальной
+            # UI (clean_filename/file_path), удобны для показа пользователю без полного пути ФС.
+            for fp in skipped_files:
+                try:
+                    rel = os.path.relpath(fp, input_dir).replace('\\', '/')
+                except ValueError:
+                    rel = fp
+                extracted_data["skipped_files"].append(rel)
         # Метка способа извлечения: AST скомпилированного .rpyc (надёжный путь).
         for s in extracted_data["strings"]:
             s.setdefault("source", "ast")

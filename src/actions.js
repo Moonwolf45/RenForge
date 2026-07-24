@@ -124,13 +124,22 @@ export async function prepareProject() {
     // по полноте на паритете с движком, без вмешательства в игру).
     showMsg('success', t('msg_extracting'), 0);
     try {
-        const total = await invoke('extract_and_ingest_project', {
+        const result = await invoke('extract_and_ingest_project', {
             projectPath: projectPath.value,
             sourceLang: sourceLang.value,
             targetLang: targetLang.value
         });
-        showMsg('success', t('msg_extracted').replace('{n}', total), 8000);
-        
+        showMsg('success', t('msg_extracted').replace('{n}', result.total), 8000);
+
+        // Roadmap 1.3: репорт файлов, пропущенных экстрактором (сбой разбора AST /
+        // не удалось загрузить .rpyc). Не блокирует успех — отдельный тост-предупреждение
+        // поверх, т.к. это частичная, а не фатальная проблема (остальные строки извлеклись).
+        const skipped = result.skipped_files || [];
+        if (skipped.length > 0) {
+            const preview = skipped.slice(0, 5).join(', ') + (skipped.length > 5 ? ', …' : '');
+            showMsg('warn', t('msg_extractor_skipped').replace('{n}', skipped.length).replace('{files}', preview), 15000);
+        }
+
         // Загружаем доступные языки из БД
         try {
             const langs = await invoke('get_project_languages', { projectPath: projectPath.value });

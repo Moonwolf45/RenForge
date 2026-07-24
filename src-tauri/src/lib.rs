@@ -73,7 +73,7 @@ async fn scan_project(path: String, target_lang: String) -> Result<ProjectFiles,
 }
 
 #[tauri::command]
-async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String, source_lang: Option<String>, target_lang: Option<String>) -> Result<i64, String> {
+async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String, source_lang: Option<String>, target_lang: Option<String>) -> Result<crate::models::ExtractResult, String> {
     let game_dir = Path::new(&project_path).join("game");
     let out_json = Path::new(&project_path).join("renforge_ast.json");
 
@@ -101,10 +101,13 @@ async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String,
 
     // Разрешаем source (auto -> конкретный) из вывода экстрактора и активируем
     // рабочее пространство пары source->target ДО ingest, чтобы данные легли в нужную БД.
-    let resolved_source = std::fs::read_to_string(&out_json).ok()
-        .and_then(|c| serde_json::from_str::<crate::models::ExtractedData>(&c).ok())
-        .and_then(|d| d.source_language)
+    // Заодно забираем skipped_files (roadmap 1.3) — один и тот же разбор JSON на оба поля.
+    let parsed_extracted = std::fs::read_to_string(&out_json).ok()
+        .and_then(|c| serde_json::from_str::<crate::models::ExtractedData>(&c).ok());
+    let resolved_source = parsed_extracted.as_ref()
+        .and_then(|d| d.source_language.clone())
         .unwrap_or_else(|| "original".to_string());
+    let skipped_files = parsed_extracted.map(|d| d.skipped_files).unwrap_or_default();
     crate::db::set_active_pair(project_path.clone(), resolved_source, target.clone())?;
 
     let _ = ingest_extracted_json(&project_path, &out_json)?;
@@ -119,7 +122,7 @@ async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String,
         );
         total = conn.query_row("SELECT COUNT(*) FROM translations", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
     }
-    Ok(total)
+    Ok(crate::models::ExtractResult { total, skipped_files })
 }
 
 /// Быстрое определение языков-источников игры (папки tl/<lang>/ + суффиксы _XX в .rpyc)

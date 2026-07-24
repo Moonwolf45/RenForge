@@ -69,6 +69,20 @@ pub struct ExtractedData {
     #[serde(default)]
     pub engine_version: Option<String>,
     pub strings: Vec<ExtractedString>,
+    /// Файлы .rpyc, пропущенные при извлечении (сбой разбора AST / не удалось загрузить
+    /// пикл) — относительные пути от game/ (roadmap 1.3). serde default: старый экстрактор
+    /// (до пересборки сайдкара) это поле не пишет — пустой список, не ошибка парсинга.
+    #[serde(default)]
+    pub skipped_files: Vec<String>,
+}
+
+/// Итог извлечения для фронта: сколько строк в БД активной пары + какие файлы игры
+/// пропущены (roadmap 1.3). Заменяет голый `i64`, который возвращала команда раньше.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExtractResult {
+    pub total: i64,
+    #[serde(default)]
+    pub skipped_files: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

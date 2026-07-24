@@ -32,6 +32,7 @@
 - RenForge's own files (patch and translations) no longer appear in the game's source-file list.
 - Header tab buttons (Text / Images / Audio) are now truly centered at any window width (they used to drift right on wide screens).
 - **Extraction resilience:** a parse failure on one problem file no longer aborts the whole extraction — that file is skipped (logged) and the remaining strings are extracted as usual.
+- **Files skipped during extraction are now visible in the UI:** if a game file couldn't be parsed, a warning listing those files appears after extraction — previously this was only visible in the technical log.
 - **Translation file robustness:** Unicode line-separator characters (U+2028/U+2029) in the text can no longer corrupt the delivery-file build — they are now escaped (no effect on the in-game result).
 
 ## [1.2.0]
