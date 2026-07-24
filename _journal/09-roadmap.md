@@ -101,10 +101,11 @@
   не разобрано». Требует пересборки сайдкара + bench (0.0 готов). Аддитивно, строки не меняются.
   Option A (без пересборки) — парсить stderr на успехе — быстрее, но хрупко (free-text).
 
-**1.3 — реализован в исходниках, ждёт пересборки сайдкара:** `skipped_files` сквозь main.py →
-models.rs → lib.rs (`ExtractResult{total,skipped_files}`) → actions.js (warn-тост) → локали ×6.
-`cargo check`+`vite build` чисты. Требует пересборки `rpyc_extractor.exe` + `bench.py`
-run/compare (регресс-дисциплина) перед коммитом-тестом владельца.
+**1.3 — готово:** `skipped_files` сквозь main.py → models.rs → lib.rs
+(`ExtractResult{total,skipped_files}`) → actions.js (warn-тост) → локали ×6. Сайдкар
+`rpyc_extractor.exe` пересобран владельцем (PyInstaller); `bench.py run`+`compare` по пулу
+из 5 игр — ALL MATCH baseline (0 регрессий), новый snapshot зафиксирован. Смоук в
+`tauri dev` пройден.
 
 **Следующий кандидат:** 0.2
 (рендер-хук диагностика — тяжелее, но двигает к динамике 3.1). 1.1 закрыт как покрытый K6.

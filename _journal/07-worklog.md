@@ -130,7 +130,7 @@ App/main), locales.js (все 6 языков), все 18 `.vue`-компонен
 ~~лишний импорт `clean_filename`~~ — **удалено**, ~~устаревший doc-`FontInfo`~~ — **актуализирован**
 тем же коммитом. Весь список чистки из аудита закрыт.
 
-### Roadmap 1.3 — репорт пропущенных файлов экстрактора (Option B, реализовано в исходниках)
+### Roadmap 1.3 — репорт пропущенных файлов экстрактора (Option B, готово)
 Экстрактор (`main.py::process_directory`) теперь кладёт `skipped_files` (пути относительно
 `game/`, нормализованные слэши) в выходной JSON — и на сбой `explore_ast`, и на пустой
 `load_ast` (раньше молча терялся, не считался вообще). `ExtractedData.skipped_files: Vec<String>`
@@ -142,13 +142,13 @@ App/main), locales.js (все 6 языков), все 18 `.vue`-компонен
 Локаль `msg_extractor_skipped` ×6. **Проверено:** `cargo check` (полный workspace, включая GUI-
 таргет — на Linux потребовались системные GTK/OpenSSL dev-пакеты и временные заглушки под sidecar-
 бинари для линуксового триплета, удалены после проверки, не коммитятся); `vite build` фронта —
-чисто. **Требует пересборки сайдкара** (`rpyc_extractor.exe`, PyInstaller/Windows) владельцем
-перед тестом/коммитом — правка тронула `main.py`.
+чисто. **Сайдкар пересобран владельцем** (`rpyc_extractor.exe`, PyInstaller/Windows) после
+правки `main.py`; `bench.py run`+`compare` по пулу из 5 игр — ALL MATCH baseline (0 регрессий),
+новый snapshot зафиксирован; смоук в `tauri dev` пройден. Roadmap 1.3 закрыт.
 
-**Перед релизом 1.3 — бамп версии в 5 местах** (сейчас везде `1.2` / `1.2.0`):
-`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
-`src/components/Header.vue` (`<sup class="version">1.2</sup>`),
-`src/components/AboutModal.vue` (`const APP_VERSION = '1.2.0'`; используется и в FALLBACK-тексте атрибуции).
+**Бамп версии в 5 местах — сделано:** `package.json`, `src-tauri/Cargo.toml`,
+`src-tauri/tauri.conf.json`, `src/components/Header.vue` (`<sup class="version">1.3</sup>`),
+`src/components/AboutModal.vue` (`const APP_VERSION = '1.3.0'`) — все на `1.3.0`/`1.3`.
 
 ## Изъяны из аудита (очередь на фикс — делаем по порядку)
 
