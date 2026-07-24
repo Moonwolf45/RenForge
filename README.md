@@ -57,8 +57,8 @@ Platform: **Windows x64**. License: **GPL-3.0**.
 
 From the release page:
 
-- **`RenForge_v1.2.0_Windows_Installer.msi`** — installer (MSI).
-- **`RenForge_v1.2.0_Portable.zip`** — portable build.
+- **`RenForge_v1.3.0_Windows_Installer.msi`** — installer (MSI).
+- **`RenForge_v1.3.0_Portable.zip`** — portable build.
 
 The WebView2 runtime is bundled into the installer (works offline).
 
@@ -122,3 +122,12 @@ Third-party components:
 | [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT (`codegen.py` — BSD-3) | `.rpyc` decompilation (source viewer) |
 
 Full license texts are in `src-tauri/licenses/`, and inside the app: "About" → "Open licenses folder".
+
+## Credits
+
+RenForge is developed by [foulnike](https://github.com/foulnike) in pair programming with AI assistants:
+
+- **Gemini** (Google)
+- **Claude** (Anthropic)
+
+All AI-written code is reviewed and tested by the author.

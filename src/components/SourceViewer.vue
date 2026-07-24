@@ -71,10 +71,13 @@
                 <span class="src-cand-dot"></span>
                 {{ t('cand_legend') }}<template v-if="candidateCount"> · {{ candidateCount }}</template>
               </label>
-              <div class="src-nav src-nav-cand" v-if="showCandidates && candidateSorted.length">
-                <button class="btn btn-secondary src-nav-btn" @click="stepCand(-1)" :title="t('prev')"><Icon name="arrow-down" :size="14" /></button>
-                <span class="src-nav-pos">{{ candNavIdx + 1 }} / {{ candidateSorted.length }}</span>
-                <button class="btn btn-secondary src-nav-btn src-nav-next" @click="stepCand(1)" :title="t('next')"><Icon name="arrow-down" :size="14" /></button>
+              <div class="src-cand-actions" v-if="showCandidates && candidateSorted.length">
+                <button class="btn btn-secondary src-addall-btn" @click="addAllCandidates" :title="t('cand_add_all_hint')"><Icon name="plus" :size="13" /> {{ t('cand_add_all') }} · {{ candidateSorted.length }}</button>
+                <div class="src-nav src-nav-cand">
+                  <button class="btn btn-secondary src-nav-btn" @click="stepCand(-1)" :title="t('prev')"><Icon name="arrow-down" :size="14" /></button>
+                  <span class="src-nav-pos">{{ candNavIdx + 1 }} / {{ candidateSorted.length }}</span>
+                  <button class="btn btn-secondary src-nav-btn src-nav-next" @click="stepCand(1)" :title="t('next')"><Icon name="arrow-down" :size="14" /></button>
+                </div>
               </div>
             </div>
           </div>
@@ -269,6 +272,20 @@ async function addCandidate(ln) {
   if (!c) return;
   await addManualString(c.text, '', c.kind, true, ln);
   showMsg('success', t('cand_added'));
+}
+
+// Массово добавить всех кандидатов файла (восстановление пропущенного экстрактором файла).
+// Снимок строк делаем заранее: addManualString вплетает блоки в parsedBlocks, и candidateMap
+// по ходу пересчитывается — итерируем по копии, чтобы не потерять записи.
+async function addAllCandidates() {
+  const items = candidateSorted.value
+    .map((ln) => ({ ln, c: candidateMap.value.get(ln) }))
+    .filter((x) => x.c);
+  if (!items.length) return;
+  for (const { ln, c } of items) {
+    await addManualString(c.text, '', c.kind, true, ln);
+  }
+  showMsg('success', t('cand_added_n').replace('{n}', items.length));
 }
 
 // --- Минимап ---
@@ -500,6 +517,9 @@ load('original');
 .src-nav-next :deep(.rf-icon) { transform: rotate(-90deg); }
 .src-nav-pos { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; min-width: 54px; text-align: center; }
 .src-nav-cand .src-nav-pos { color: var(--status-review); }
+.src-cand-actions { display: inline-flex; align-items: center; gap: 10px; }
+.src-addall-btn { padding: 4px 10px; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; border-color: var(--status-review); color: var(--status-review); }
+.src-addall-btn:hover { background: color-mix(in srgb, var(--status-review) 16%, transparent); }
 
 .src-spinner { width: 16px; height: 16px; border: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; display: inline-block; }
 </style>

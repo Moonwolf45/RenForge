@@ -36,7 +36,7 @@ import { t } from '../locales.js';
 import Icon from './Icon.vue';
 import appLogo from '../assets/app-logo.png';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 // Английская атрибуция-фолбэк (на случай, если ресурс не прочитался, напр. в dev).
 const FALLBACK = `RenForge v${APP_VERSION} — GPL-3.0 — (c) foulnike

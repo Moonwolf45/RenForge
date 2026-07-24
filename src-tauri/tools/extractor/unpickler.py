@@ -492,28 +492,6 @@ def extract_implicit_string(expr):
     except SyntaxError:
         return None
 
-# ТОЧЕЧНЫЙ ФИКС №3: Умный парсер для кастомных экранов (use animbutton ("Start", ...))
-def extract_targeted_use_args(expr):
-    if not isinstance(expr, str) or not expr.strip(): return []
-    strings = []
-    try:
-        # Оборачиваем аргументы в вызов функции, чтобы AST распарсил их как список аргументов
-        parsed = python_ast.parse(f"dummy_func({expr})")
-        if parsed.body and isinstance(parsed.body[0], python_ast.Expr):
-            call_node = parsed.body[0].value
-            if isinstance(call_node, python_ast.Call):
-                # Извлекаем ТОЛЬКО прямые позиционные строки (игнорируя вложенные вызовы типа ShowMenu)
-                for arg_node in call_node.args:
-                    val = get_ast_string(arg_node)
-                    # Базовая защита от извлечения системных ID (типа gallery_cg)
-                    if val and not re.match(r'^[a-z0-9_]+$', val):
-                        strings.append(val)
-    except SyntaxError:
-        pass
-    return strings
-
-# =====================================================================
-
 def _sl1_str_value(node):
     """Строковое значение из mock _ast-узла (Str/Constant/Num), иначе None."""
     cn = getattr(node, '__class_name__', None)

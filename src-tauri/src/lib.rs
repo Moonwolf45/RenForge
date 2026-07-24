@@ -73,7 +73,7 @@ async fn scan_project(path: String, target_lang: String) -> Result<ProjectFiles,
 }
 
 #[tauri::command]
-async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String, source_lang: Option<String>, target_lang: Option<String>) -> Result<i64, String> {
+async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String, source_lang: Option<String>, target_lang: Option<String>) -> Result<crate::models::ExtractResult, String> {
     let game_dir = Path::new(&project_path).join("game");
     let out_json = Path::new(&project_path).join("renforge_ast.json");
 
@@ -101,10 +101,13 @@ async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String,
 
     // Разрешаем source (auto -> конкретный) из вывода экстрактора и активируем
     // рабочее пространство пары source->target ДО ingest, чтобы данные легли в нужную БД.
-    let resolved_source = std::fs::read_to_string(&out_json).ok()
-        .and_then(|c| serde_json::from_str::<crate::models::ExtractedData>(&c).ok())
-        .and_then(|d| d.source_language)
+    // Заодно забираем skipped_files (roadmap 1.3) — один и тот же разбор JSON на оба поля.
+    let parsed_extracted = std::fs::read_to_string(&out_json).ok()
+        .and_then(|c| serde_json::from_str::<crate::models::ExtractedData>(&c).ok());
+    let resolved_source = parsed_extracted.as_ref()
+        .and_then(|d| d.source_language.clone())
         .unwrap_or_else(|| "original".to_string());
+    let skipped_files = parsed_extracted.map(|d| d.skipped_files).unwrap_or_default();
     crate::db::set_active_pair(project_path.clone(), resolved_source, target.clone())?;
 
     let _ = ingest_extracted_json(&project_path, &out_json)?;
@@ -119,7 +122,7 @@ async fn extract_and_ingest_project(app: tauri::AppHandle, project_path: String,
         );
         total = conn.query_row("SELECT COUNT(*) FROM translations", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
     }
-    Ok(total)
+    Ok(crate::models::ExtractResult { total, skipped_files })
 }
 
 /// Быстрое определение языков-источников игры (папки tl/<lang>/ + суффиксы _XX в .rpyc)
@@ -168,15 +171,17 @@ pub fn ingest_extracted_json(project_path: &str, out_json: &Path) -> Result<Stri
 
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO translations (id, block_type, file_path, line_number, who, original, translation, status, prefix)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO translations (id, block_type, file_path, line_number, who, original, translation, status, prefix, source, alt_texts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET 
                 block_type = excluded.block_type,
                 file_path = excluded.file_path,
                 line_number = excluded.line_number,
                 who = excluded.who,
                 original = excluded.original,
-                prefix = excluded.prefix"
+                prefix = excluded.prefix,
+                source = excluded.source,
+                alt_texts = excluded.alt_texts"
         ).map_err(|e| e.to_string())?;
 
         // Отдельная таблица для Character mapping (define строки)
@@ -251,6 +256,12 @@ pub fn ingest_extracted_json(project_path: &str, out_json: &Path) -> Result<Stri
             }
             seen_ids.insert(final_id.clone());
 
+            // alt-тексты (multi-key) → JSON-массив в TEXT-колонку; пусто → NULL.
+            let alt_json: Option<String> = if string_data.alt_texts.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&string_data.alt_texts).ok()
+            };
             stmt.execute(rusqlite::params![
                 final_id,
                 string_data.block_type,
@@ -260,7 +271,9 @@ pub fn ingest_extracted_json(project_path: &str, out_json: &Path) -> Result<Stri
                 string_data.what,
                 "", 
                 "untranslated",
-                string_data.prefix
+                string_data.prefix,
+                string_data.source,
+                alt_json
             ]).map_err(|e| e.to_string())?;
         }
     }
@@ -289,8 +302,8 @@ pub fn ingest_extracted_json(project_path: &str, out_json: &Path) -> Result<Stri
         ];
         if let Ok(mut stmt) = conn.prepare(
             "INSERT INTO translations \
-             (id, block_type, file_path, line_number, who, original, translation, status, prefix) \
-             SELECT ?1, 'ui', 'engine (renpy common)', 0, '[ENGINE]', ?2, '', 'untranslated', NULL \
+             (id, block_type, file_path, line_number, who, original, translation, status, prefix, source) \
+             SELECT ?1, 'ui', 'engine (renpy common)', 0, '[ENGINE]', ?2, '', 'untranslated', NULL, 'regex' \
              WHERE NOT EXISTS (SELECT 1 FROM translations WHERE original = ?2)"
         ) {
             for (i, s) in engine_strings.iter().enumerate() {
@@ -595,7 +608,12 @@ const RENFORGE_EARLY_HOOK: &str = r#"    # --- Канал 6 (ранний): яз
                         return _renforge_ui_map[s]
                 except Exception:
                     pass
-                return _renforge_ts_orig(s, *args, **kwargs)
+                _r = _renforge_ts_orig(s, *args, **kwargs)
+                try:
+                    if _r == s: _renforge_log_uncovered("ui", s)
+                except Exception:
+                    pass
+                return _r
             if _rf_store is not None:
                 try:
                     _rf_store._ = _renforge_translate_string
@@ -632,6 +650,7 @@ const RENFORGE_RUNTIME: &str = r#"    # --- Канал 1: диалоги и ме
                     return _renforge_say_map[us]
         except Exception:
             pass
+        _renforge_log_uncovered("say", s)
         return s
 
     try:
@@ -694,6 +713,7 @@ const RENFORGE_RUNTIME: &str = r#"    # --- Канал 1: диалоги и ме
                 return _renforge_say_map[p]
         except Exception:
             pass
+        _renforge_log_uncovered("input", p)
         return p
 
     try:
@@ -728,6 +748,7 @@ const RENFORGE_RUNTIME: &str = r#"    # --- Канал 1: диалоги и ме
                 return _renforge_ui_map[s]
         except Exception:
             pass
+        _renforge_log_uncovered("uitext", s)
         return s
 
     try:
@@ -739,6 +760,37 @@ const RENFORGE_RUNTIME: &str = r#"    # --- Канал 1: диалоги и ме
             _rf_ui_mod.text = _renforge_ui_text
     except Exception:
         pass
+"#;
+
+/// Диагностика покрытия (opt-in): no-op заглушка `_renforge_log_uncovered`. Шаблоны каналов
+/// всегда зовут её на промахах; когда диагностика выключена — она ничего не делает.
+const RENFORGE_LOG_NOOP: &str = "    def _renforge_log_uncovered(chan, s):\n        pass\n";
+
+/// Диагностика покрытия (opt-in): реальный логгер. На промахе канала пишет строку (с дедупом
+/// в рамках сессии) в `<basedir>/renforge_uncovered.log` как `chan\t<escaped>`. RenForge затем
+/// сверяет лог с БД и показывает, что видно в игре, но не покрыто. Всё в try/except — не падает.
+const RENFORGE_LOG_DIAG: &str = r#"    # --- Диагностика покрытия: лог непокрытого текста ---
+    _renforge_uncov_seen = set()
+    def _renforge_log_uncovered(chan, s):
+        try:
+            _st = (str, unicode)
+        except NameError:
+            _st = (str,)
+        try:
+            if not isinstance(s, _st) or not s:
+                return
+            _k = (chan, s)
+            if _k in _renforge_uncov_seen:
+                return
+            _renforge_uncov_seen.add(_k)
+            _e = s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+            import os as _os
+            _p = _os.path.join(config.basedir, "renforge_uncovered.log")
+            _f = open(_p, "ab")
+            _f.write((chan + "\t" + _e + "\n").encode("utf-8"))
+            _f.close()
+        except Exception:
+            pass
 "#;
 
 /// API для пользовательских хуков, доступный в фазе `python early` (словари уже определены).
@@ -891,13 +943,21 @@ fn extract_interps(s: &str) -> Vec<String> {
     out
 }
 
-/// Экранирование строки для Python-литерала внутри u"..." (для словаря фильтра).
+/// Экранирование строки для Python-литерала внутри u"..." (словарь доставки).
+/// U+2028/U+2029 (Unicode line/paragraph separators) экранируем в `\uXXXX`: сам CPython их
+/// в литерале терпит, НО это разделители строк для `str.splitlines()` и лексеров, читающих
+/// .rpy построчно (Ren'Py) — сырой символ мог бы «разорвать» логическую строку и сломать
+/// разбор ВСЕГО файла доставки. `\u2028` даёт ТОТ ЖЕ рантайм-символ → значение перевода не
+/// меняется, безопасным становится только исходное представление. (Порядок важен: замену
+/// `\\` делаем первой, поэтому вводимые здесь бэкслэши повторно не экранируются.)
 fn escape_py_double(s: &str) -> String {
     s.replace('\\', "\\\\")
      .replace('\"', "\\\"")
      .replace('\n', "\\n")
      .replace('\r', "\\r")
      .replace('\t', "\\t")
+     .replace('\u{2028}', "\\u2028")
+     .replace('\u{2029}', "\\u2029")
 }
 
 /// Рекурсивно снимает атрибут «только чтение» с файлов/папок проекта.
@@ -935,9 +995,22 @@ fn is_path_writable(project_path: String) -> bool {
     }
 }
 
+/// Счётчики результата сборки перевода — для локализованного отчёта на фронте.
+#[derive(serde::Serialize, Default)]
+pub struct BuildCounts {
+    /// ключей в say_map (диалоги/меню + их alt-варианты)
+    pub say: usize,
+    /// ключей в strings_map (UI/python + alt-варианты)
+    pub ui: usize,
+    /// из доставленных — со статусом 'outdated' (перенос/память): требуют проверки
+    pub review: usize,
+    /// пропущено из-за чужой интерполяции [var]
+    pub skipped_bad: usize,
+}
+
 #[tauri::command]
-fn generate_translations(project_path: String, target_lang: String) -> Result<String, String> {
-    generate_translations_core(project_path, target_lang)
+fn generate_translations(project_path: String, target_lang: String, diagnostic: bool) -> Result<BuildCounts, String> {
+    generate_translations_core(project_path, target_lang, diagnostic)
 }
 
 /// Экспертный просмотр: содержимое нашего рантайм-файла перевода («наша вёрстка»).
@@ -950,7 +1023,7 @@ fn preview_generated_translations(project_path: String, target_lang: String) -> 
             return Ok(s);
         }
     }
-    let (out, _, _, _) = build_runtime_rpy(&project_path, &target_lang)?;
+    let (out, _) = build_runtime_rpy(&project_path, &target_lang, false)?;
     Ok(out)
 }
 
@@ -1053,8 +1126,8 @@ async fn validate_delivery_hook(app: tauri::AppHandle, project_path: String, cod
 }
 
 /// Чистая логика генерации (без tauri::command) — для CLI/тестов.
-pub fn generate_translations_core(project_path: String, target_lang: String) -> Result<String, String> {
-    let (out, n_say, n_ui, skipped_bad) = build_runtime_rpy(&project_path, &target_lang)?;
+pub fn generate_translations_core(project_path: String, target_lang: String, diagnostic: bool) -> Result<BuildCounts, String> {
+    let (out, counts) = build_runtime_rpy(&project_path, &target_lang, diagnostic)?;
     let game_dir = std::path::Path::new(&project_path).join("game");
 
     // Чистим старые сгенерированные файлы (в т.ч. из прошлых версий RenForge).
@@ -1073,27 +1146,25 @@ pub fn generate_translations_core(project_path: String, target_lang: String) -> 
     std::fs::write(game_dir.join("renforge_translations.rpy"), out)
         .map_err(|e| format!("Ошибка записи перевода: {}", e))?;
 
-    Ok(format!(
-        "Переводы сгенерированы (рантайм): диалогов/меню {}, UI-строк {}.{}",
-        n_say, n_ui,
-        if skipped_bad > 0 { format!(" Пропущено небезопасных (чужие [var]): {}.", skipped_bad) } else { String::new() }
-    ))
+    Ok(counts)
 }
 
 /// Строит содержимое рантайм-файла перевода (БЕЗ записи/чистки) — общий код для
 /// генерации и для превью «нашей вёрстки» в экспертном просмотре.
-fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, usize, usize, usize), String> {
+fn build_runtime_rpy(project_path: &str, target_lang: &str, diagnostic: bool) -> Result<(String, BuildCounts), String> {
     let conn = crate::db::get_db_conn(project_path).map_err(|e| e.to_string())?;
 
-    // Берём ВСЕ переведённые строки. block_type определяет канал доставки:
+    // Берём переведённые И перенесённые-на-проверку (status='outdated') строки: теперь
+    // доставляем и те, и другие — перенос/память видны в игре (иначе их нельзя проверить
+    // по Shift+R); статус несём для отчёта «требуют проверки». block_type — канал доставки:
     //   dialogue / menu  -> say_menu_text_filter (перехват по тексту say/menu)
     //   ui / python      -> прямая запись в translator.strings[lang].translations
     // Оба канала — рантайм, без translate-блоков и без ID. Это исключает
     // коллизии со встроенными переводами игры и краши "translation already exists".
     let mut stmt = conn.prepare(
-        "SELECT block_type, original, translation, channel
+        "SELECT block_type, original, translation, channel, alt_texts, status
          FROM translations
-         WHERE status = 'translated' AND translation IS NOT NULL AND translation != ''"
+         WHERE status IN ('translated', 'outdated') AND translation IS NOT NULL AND translation != ''"
     ).map_err(|e| e.to_string())?;
 
     let rows = stmt.query_map([], |row| {
@@ -1102,10 +1173,12 @@ fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, u
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(5)?,
         ))
     }).map_err(|e| e.to_string())?;
 
-    let records: Vec<(String, String, String, Option<String>)> = rows.filter_map(Result::ok).collect();
+    let records: Vec<(String, String, String, Option<String>, Option<String>, String)> = rows.filter_map(Result::ok).collect();
     if records.is_empty() {
         return Err("В базе нет сохраненных переводов!".to_string());
     }
@@ -1114,10 +1187,15 @@ fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, u
     use std::collections::HashMap as StdHashMap;
     let mut say_map: StdHashMap<String, String> = StdHashMap::new();    // диалоги + меню
     let mut strings_map: StdHashMap<String, String> = StdHashMap::new(); // ui + python
+    let mut review_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut skipped_bad = 0usize;
 
-    for (block_type, original, translation, channel) in &records {
+    for (block_type, original, translation, channel, alt_texts, status) in &records {
         if original.is_empty() { continue; }
+        // Идентичная пара (перевод == оригиналу) — подмена текста самим собой, no-op.
+        // Это и подтверждённые вручную строки («…»→«…», имена, числа): в учёте они
+        // «переведены», но доставлять их незачем — пропускаем, чтобы не раздувать файл.
+        if original == translation { continue; }
         // Предохранитель: пропускаем перевод с интерполяцией [var], которой нет в
         // оригинале (несуществующая переменная -> KeyError в игре, как с "[ПЕР]").
         // Редактор это подсвечивает, но импорт/ИИ могли записать напрямую.
@@ -1140,11 +1218,37 @@ fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, u
                 _ => (false, true),
             },
         };
-        if to_say {
-            say_map.entry(original.clone()).or_insert_with(|| translation.clone());
+        // status='outdated' (перенос/память) теперь тоже доставляем, но помечаем на проверку.
+        let is_review = status == "outdated";
+        if to_say && !say_map.contains_key(original) {
+            say_map.insert(original.clone(), translation.clone());
+            if is_review { review_keys.insert(original.clone()); }
         }
-        if to_ui {
-            strings_map.entry(original.clone()).or_insert_with(|| translation.clone());
+        if to_ui && !strings_map.contains_key(original) {
+            strings_map.insert(original.clone(), translation.clone());
+            if is_review { review_keys.insert(original.clone()); }
+        }
+
+        // Multi-key: тот же перевод — под альтернативными текстами строки (варианты в
+        // языке-источнике, напр. base + tl/english). Рантайм показывает один из них,
+        // мы ключуем все → строка матчится в любом случае. alt_texts — JSON-массив.
+        if let Some(alt_json) = alt_texts {
+            if let Ok(alts) = serde_json::from_str::<Vec<String>>(alt_json) {
+                let tr_interps = extract_interps(translation);
+                for alt in &alts {
+                    if alt.is_empty() || alt == original || alt == translation { continue; }
+                    // Предохранитель KeyError: перевод не должен требовать [var], которых
+                    // нет в alt-ключе (реворд мог отбросить переменную).
+                    let alt_i = extract_interps(alt);
+                    if tr_interps.iter().any(|t| !alt_i.contains(t)) { continue; }
+                    if to_say {
+                        say_map.entry(alt.clone()).or_insert_with(|| translation.clone());
+                    }
+                    if to_ui {
+                        strings_map.entry(alt.clone()).or_insert_with(|| translation.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -1173,6 +1277,10 @@ fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, u
     }
     out.push_str("    }\n");
 
+    // 2.5) Диагностика покрытия (opt-in): всегда определяем `_renforge_log_uncovered` — реальный
+    // логгер при диагностической сборке, иначе no-op. Шаблоны каналов зовут его на промахах.
+    out.push_str(if diagnostic { RENFORGE_LOG_DIAG } else { RENFORGE_LOG_NOOP });
+
     // 3) Ранний языконезависимый хук _()/translate_string + store._/__
     out.push_str(RENFORGE_EARLY_HOOK);
     out.push_str("\n");
@@ -1198,9 +1306,90 @@ fn build_runtime_rpy(project_path: &str, target_lang: &str) -> Result<(String, u
         weave_hooks(&mut out, &hooks, "init");
     }
 
-    Ok((out, say_map.len(), strings_map.len(), skipped_bad))
+    Ok((out, BuildCounts { say: say_map.len(), ui: strings_map.len(), review: review_keys.len(), skipped_bad }))
 }
 
+
+/// Одна строка из лога непокрытого (диагностика покрытия). `in_db` — есть ли оригинал в БД
+/// активной пары; `translated` — переведён ли он. Ценные — те, что НЕ в БД: их извлечение/
+/// доставка не покрыла, кандидаты в ручные строки.
+#[derive(serde::Serialize)]
+pub struct UncoveredEntry {
+    pub chan: String,       // say | ui | input | uitext
+    pub text: String,
+    pub in_db: bool,
+    pub translated: bool,
+}
+
+/// Разэкранирование строки из лога (`\\`, `\n`, `\r`, `\t`).
+fn unescape_log(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('\\') => out.push('\\'),
+                Some(o) => { out.push('\\'); out.push(o); }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Диагностика покрытия: читает `<project>/renforge_uncovered.log` (пишется рантайм-логгером
+/// при диагностической сборке), дедуплицирует и сверяет с БД активной пары. Возвращает строки,
+/// ВИДИМЫЕ в игре; те, что НЕ в БД (`in_db=false`) — кандидаты (извлечение их не поймало).
+#[tauri::command]
+fn read_uncovered(project_path: String) -> Result<Vec<UncoveredEntry>, String> {
+    let log_path = std::path::Path::new(&project_path).join("renforge_uncovered.log");
+    let content = match std::fs::read_to_string(&log_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(Vec::new()),
+    };
+    // Оригиналы из БД: original -> есть ли непустой перевод.
+    let mut db: HashMap<String, bool> = HashMap::new();
+    if let Ok(conn) = crate::db::get_db_conn(&project_path) {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT original, MAX(CASE WHEN status='translated' AND translation IS NOT NULL AND translation != '' THEN 1 ELSE 0 END) \
+             FROM translations GROUP BY original"
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1).unwrap_or(0) == 1))) {
+                for row in rows.flatten() { db.insert(row.0, row.1); }
+            }
+        }
+    }
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in content.lines() {
+        if line.is_empty() { continue; }
+        let mut parts = line.splitn(2, '\t');
+        let chan = parts.next().unwrap_or("").to_string();
+        let text = match parts.next() { Some(e) => unescape_log(e), None => continue };
+        if !seen.insert((chan.clone(), text.clone())) { continue; }
+        let (in_db, translated) = match db.get(&text) {
+            Some(&t) => (true, t),
+            None => (false, false),
+        };
+        out.push(UncoveredEntry { chan, text, in_db, translated });
+    }
+    Ok(out)
+}
+
+/// Диагностика покрытия: удалить лог непокрытого (сброс перед новым прогоном).
+#[tauri::command]
+fn clear_uncovered(project_path: String) -> Result<(), String> {
+    let log_path = std::path::Path::new(&project_path).join("renforge_uncovered.log");
+    if log_path.exists() {
+        std::fs::remove_file(&log_path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[tauri::command]
 fn apply_renforge_patch(
@@ -1305,22 +1494,20 @@ pub fn apply_renforge_patch_core(
     clear_readonly_recursive(&root_dir);
 
     // Универсальный патч на чистом Python.
-    // init -999: dev/console + санация ядовитого _preferences.language.
+    // init -999: санация ядовитого _preferences.language.
     // ВНИМАНИЕ: язык игры НЕ переключаем намеренно. renpy.change_language(target)
     // отравляет persistent _preferences.language и ломает игры, индексирующие свои
     // словари по языку (ES: translation[..][_preferences.language] -> KeyError).
     // Доставка перевода полностью языконезависима: К1 say_menu_text_filter,
     // К5 renpy.ui.text, К6 хук translate_string — переключение языка не требуется.
+    //
+    // dev/console НЕ включаем: игроку это не нужно, а config.developer=True меняет пути
+    // кода достижений (renpy/common/00achievement.rpy: progress() без stat_max в dev-режиме
+    // бросает исключение вместо тихого return; плюс многие игры вешают на выдачу ачивок
+    // `if not config.developer`). Форс dev-режима в доставленном моде ломал Steam-достижения
+    // (фидбэк тестера, 1.2). Для доставки перевода dev/console не требуется.
     let mut patch_content = format!(r#"
 init -999 python:
-    try:
-        config.developer = True
-    except:
-        pass
-    try:
-        config.console = True
-    except:
-        pass
     # Санация языка ДО init-кода игры (приоритет 0). Прошлые версии патча могли
     # записать в persistent _preferences.language язык, которого игра не знает
     # (напр. "russian" у ES) — её init-код индексирует словари по языку и падает
@@ -1636,6 +1823,247 @@ async fn export_translation(app: tauri::AppHandle, project_path: String, target_
     tokio::task::spawn_blocking(move || {
         export_translation_core(&app, &project_path, &target_lang, &mode, &out_root, overwrite)
     }).await.map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Serialize)]
+struct StringsExportResult {
+    code: String,
+    files: usize,
+    strings: usize,
+}
+
+struct ExportRow {
+    id: String,
+    file: String,
+    line: i64,
+    who: Option<String>,
+    original: String,
+    translation: String,
+    status: String,
+}
+
+/// Экранирование для PO (gettext): \ " \n \t \r.
+fn po_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+        .replace('\r', "\\r")
+}
+
+fn build_po(entries: &[ExportRow], target_lang: &str) -> String {
+    let mut s = String::new();
+    s.push_str("msgid \"\"\nmsgstr \"\"\n");
+    s.push_str("\"Project-Id-Version: RenForge\\n\"\n");
+    s.push_str(&format!("\"Language: {}\\n\"\n", target_lang));
+    s.push_str("\"Content-Type: text/plain; charset=UTF-8\\n\"\n\n");
+    for e in entries {
+        let reference = e.file.replace(['\n', '\r'], " ");
+        s.push_str(&format!("#: {}:{}\n", reference, e.line));
+        if let Some(w) = &e.who {
+            if !w.is_empty() {
+                s.push_str(&format!("#. who: {}\n", w.replace(['\n', '\r'], " ")));
+            }
+        }
+        if e.status == "outdated" {
+            s.push_str("#, fuzzy\n");
+        }
+        s.push_str(&format!("msgctxt \"{}\"\n", po_escape(&e.id)));
+        s.push_str(&format!("msgid \"{}\"\n", po_escape(&e.original)));
+        s.push_str(&format!("msgstr \"{}\"\n\n", po_escape(&e.translation)));
+    }
+    s
+}
+
+fn build_csv(entries: &[ExportRow]) -> String {
+    let mut s = String::from("ID;Original;Translation\n");
+    for e in entries {
+        let orig = e.original.replace('"', "\"\"").replace('\n', "[BR]");
+        let mut tran = e.translation.replace('"', "\"\"").replace('\n', "[BR]");
+        // Защита от CSV-инъекции формул (как в одно-файловом экспорте на фронте).
+        if tran.starts_with(['=', '+', '-', '@']) {
+            tran = format!("'{}", tran);
+        }
+        s.push_str(&format!("\"{}\";\"{}\";\"{}\"\n", e.id, orig, tran));
+    }
+    s
+}
+
+fn build_json(entries: &[ExportRow]) -> Result<String, String> {
+    #[derive(serde::Serialize)]
+    struct JsonEntry<'a> {
+        id: &'a str,
+        original: &'a str,
+        translation: &'a str,
+    }
+    let v: Vec<JsonEntry> = entries
+        .iter()
+        .map(|e| JsonEntry { id: &e.id, original: &e.original, translation: &e.translation })
+        .collect();
+    serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
+}
+
+/// Безопасно склеивает out_root/<subdir>/<rel_file>.<ext>, отбрасывая `.`/`..`/абсолютные
+/// компоненты (rel_file приходит из БД как путь относительно game/).
+fn write_export_file(out_root: &Path, subdir: &str, rel_file: &str, ext: &str, content: &str) -> Result<(), String> {
+    let mut p = out_root.join(subdir);
+    for comp in rel_file.split(['/', '\\']) {
+        if comp.is_empty() || comp == "." || comp == ".." {
+            continue;
+        }
+        p.push(comp);
+    }
+    let leaf = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file")
+        .to_string();
+    p.set_file_name(format!("{}.{}", leaf, ext));
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, content).map_err(|e| e.to_string())
+}
+
+/// Пакетный экспорт строк активной пары во все форматы (CSV/JSON/PO) — по файлу на каждый
+/// исходник, имена совпадают с исходными (script.rpy -> script.rpy.po). Несёт id строки как
+/// ключ (msgctxt в PO, колонка в CSV/JSON) для будущего пакетного импорта по совпадению имён.
+fn export_strings_core(project_path: &str, target_lang: &str, out_root: &str) -> Result<StringsExportResult, String> {
+    let conn = crate::db::get_db_conn(project_path).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, file_path, line_number, who, original, translation, status
+             FROM translations ORDER BY file_path, line_number",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(ExportRow {
+                id: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                file: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                line: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                who: r.get::<_, Option<String>>(3)?,
+                original: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                translation: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                status: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<ExportRow>> = BTreeMap::new();
+    let mut total = 0usize;
+    for r in rows.filter_map(Result::ok) {
+        total += 1;
+        let key = if r.file.trim().is_empty() { "_unknown".to_string() } else { r.file.clone() };
+        groups.entry(key).or_default().push(r);
+    }
+    if total == 0 {
+        return Err("В базе нет строк для экспорта.".to_string());
+    }
+
+    let out = Path::new(out_root);
+    let mut files = 0usize;
+    for (file, mut entries) in groups {
+        entries.sort_by_key(|e| e.line);
+        write_export_file(out, "po", &file, "po", &build_po(&entries, target_lang))?;
+        write_export_file(out, "csv", &file, "csv", &build_csv(&entries))?;
+        write_export_file(out, "json", &file, "json", &build_json(&entries)?)?;
+        files += 1;
+    }
+    Ok(StringsExportResult { code: "done".into(), files, strings: total })
+}
+
+#[tauri::command]
+async fn export_strings(project_path: String, target_lang: String, out_root: String) -> Result<StringsExportResult, String> {
+    tokio::task::spawn_blocking(move || export_strings_core(&project_path, &target_lang, &out_root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Serialize)]
+struct GameFileInfo {
+    rel_path: String,        // путь относительно game/, нормализован к .rpy (ключ как в БД)
+    status: String,          // "extracted" | "empty" | "lang"
+    total: i32,
+    translated: i32,
+    lang: Option<String>,    // обнаруженный языковой суффикс (если файл — чужая локализация)
+}
+
+/// Языковой суффикс файла (script_ru.rpyc -> RU). Список синхронизирован с экстрактором.
+fn detect_lang_suffix(stem: &str) -> Option<String> {
+    let base = stem.rsplit('/').next().unwrap_or(stem).to_lowercase();
+    // Длинные суффиксы первыми (pt-br перед ...), чтобы не сматчить короткий по ошибке.
+    const SUFFIXES: &[&str] = &[
+        "pt-br", "zh-hant", "de", "es", "fr", "jp", "kr", "pl", "ru", "zh", "it", "nl", "sv",
+        "cs", "hu", "tr", "ar", "th", "vi", "id", "uk", "ro", "bg", "hr", "en",
+    ];
+    for s in SUFFIXES {
+        if base.ends_with(&format!("_{}", s)) {
+            return Some(s.to_uppercase());
+        }
+    }
+    None
+}
+
+/// Все скриптовые файлы игры (.rpyc/.rpy в game/) со статусом: извлечён (есть строки в БД),
+/// чужой язык (по суффиксу), либо «не извлечён». Для модалки выбора пропущенного файла.
+#[tauri::command]
+fn list_game_files(project_path: String) -> Result<Vec<GameFileInfo>, String> {
+    let game = Path::new(&project_path).join("game");
+    if !game.exists() {
+        return Ok(Vec::new());
+    }
+
+    // Счётчики по файлам из БД активной пары.
+    let mut db_stats: HashMap<String, (i32, i32)> = HashMap::new();
+    if let Ok(conn) = crate::db::get_db_conn(&project_path) {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT file_path, COUNT(id), SUM(CASE WHEN status='translated' THEN 1 ELSE 0 END)
+             FROM translations GROUP BY file_path",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?, r.get::<_, Option<i32>>(2)?.unwrap_or(0)))
+            }) {
+                for row in rows.flatten() {
+                    db_stats.insert(row.0, (row.1, row.2));
+                }
+            }
+        }
+    }
+
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<String, GameFileInfo> = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(&game).into_iter().filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if !p.is_file() { continue; }
+        let ext = match p.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()) {
+            Some(e) => e,
+            None => continue,
+        };
+        if ext != "rpyc" && ext != "rpy" { continue; }
+        let rel = match p.strip_prefix(&game) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        // Пропускаем оверлей-переводы tl/ и наши сгенерированные файлы доставки
+        // (патч 00_renforge_patch.* и renforge_*.* — это вывод RenForge, не исходники игры).
+        let base = rel.rsplit('/').next().unwrap_or(&rel);
+        if rel.starts_with("tl/")
+            || base.starts_with("renforge_")
+            || base == "00_renforge_patch.rpy" || base == "00_renforge_patch.rpyc" {
+            continue;
+        }
+        let stem = rel.strip_suffix(".rpyc").or_else(|| rel.strip_suffix(".rpy")).unwrap_or(&rel).to_string();
+        let key = format!("{}.rpy", stem);
+        if seen.contains_key(&key) { continue; } // дедуп .rpyc + .rpy одного файла
+
+        let (total, translated) = db_stats.get(&key).copied().unwrap_or((0, 0));
+        let lang = detect_lang_suffix(&stem);
+        let status = if total > 0 { "extracted" } else if lang.is_some() { "lang" } else { "empty" };
+        seen.insert(key.clone(), GameFileInfo { rel_path: key, status: status.into(), total, translated, lang });
+    }
+    Ok(seen.into_values().collect())
 }
 
 /// Запрос к OpenAI-совместимому LLM API (chat/completions). Идёт через Rust (reqwest),
@@ -2106,7 +2534,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init()) 
         .invoke_handler(tauri::generate_handler![
             read_text_file, write_text_file, scan_project, run_unrpa, discover_source_languages,
-            prepare_writable, export_translation, llm_chat_request, is_path_writable, remove_renforge_mod, cancel_export,
+            prepare_writable, export_translation, llm_chat_request, is_path_writable, remove_renforge_mod, cancel_export, export_strings, list_game_files,
             generate_translations, apply_renforge_patch, get_project_fonts, get_character_mapping, get_images_list, import_localized_image, delete_localized_image, open_in_explorer,
             get_audio_list, import_localized_audio, delete_localized_audio, extract_and_ingest_project,
             migrate_translations,
@@ -2117,6 +2545,7 @@ pub fn run() {
             db::delete_translations,
             db::get_translation_stats,
             db::get_translations_for_file,
+            db::get_duplicate_originals,
             db::get_project_languages,
             db::get_project_meta,
             db::list_translation_pairs,
@@ -2125,7 +2554,8 @@ pub fn run() {
             db::delete_translation_pair,
             tm::tm_contribute, tm::tm_fill, tm::tm_list, tm::tm_upsert, tm::tm_delete, tm::tm_count, tm::tm_clear,
             preview_generated_translations, decompile_rpyc,
-            get_delivery_hooks, save_delivery_hooks, validate_delivery_hook
+            get_delivery_hooks, save_delivery_hooks, validate_delivery_hook,
+            read_uncovered, clear_uncovered
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2175,5 +2605,8 @@ mod tests {
         assert_eq!(escape_py_double("a\"b"), "a\\\"b");
         assert_eq!(escape_py_double("c\\d"), "c\\\\d");
         assert_eq!(escape_py_double("e\nf"), "e\\nf");
+        // U+2028/U+2029 -> \u-форма (защита от построчных лексеров, напр. Ren'Py)
+        assert_eq!(escape_py_double("g\u{2028}h"), "g\\u2028h");
+        assert_eq!(escape_py_double("i\u{2029}j"), "i\\u2029j");
     }
 }

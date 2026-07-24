@@ -57,8 +57,8 @@ GUI-инструмент для извлечения текста, локали�
 
 Со страницы релиза:
 
-- **`RenForge_v1.2.0_Windows_Installer.msi`** — установщик (MSI).
-- **`RenForge_v1.2.0_Portable.zip`** — Портативная версия.
+- **`RenForge_v1.3.0_Windows_Installer.msi`** — установщик (MSI).
+- **`RenForge_v1.3.0_Portable.zip`** — Портативная версия.
 
 Рантайм WebView2 встроен в установщик (работает офлайн).
 
@@ -122,3 +122,12 @@ RenForge распространяется под лицензией **GNU GPL v3
 | [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT (`codegen.py` — BSD-3) | Декомпиляция `.rpyc` (просмотр исходника) |
 
 Полные тексты лицензий — в `src-tauri/licenses/`, а в приложении: «О программе» → «Открыть папку лицензий».
+
+## Соавторы
+
+RenForge разрабатывается [foulnike](https://github.com/foulnike) в парном программировании с ИИ-ассистентами:
+
+- **Gemini** (Google)
+- **Claude** (Anthropic)
+
+Весь код, написанный ИИ, проходит вычитку и тестирование автора.

@@ -46,6 +46,14 @@ pub struct ExtractedString {
     pub who: Option<String>,
     pub what: String,
     pub prefix: Option<String>,
+    /// Способ извлечения строки: "ast" (из .rpyc через AST) | "regex" (текстовый парс .rpy).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Иные текстовые варианты этой же строки (по translation id) из одноязычных
+    /// источников (base + tl/<same-lang>). Доставка регистрирует перевод под всеми —
+    /// строка матчится независимо от того, какой текст показан в рантайме (multi-key).
+    #[serde(default)]
+    pub alt_texts: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -61,14 +69,29 @@ pub struct ExtractedData {
     #[serde(default)]
     pub engine_version: Option<String>,
     pub strings: Vec<ExtractedString>,
+    /// Файлы .rpyc, пропущенные при извлечении (сбой разбора AST / не удалось загрузить
+    /// пикл) — относительные пути от game/ (roadmap 1.3). serde default: старый экстрактор
+    /// (до пересборки сайдкара) это поле не пишет — пустой список, не ошибка парсинга.
+    #[serde(default)]
+    pub skipped_files: Vec<String>,
+}
+
+/// Итог извлечения для фронта: сколько строк в БД активной пары + какие файлы игры
+/// пропущены (roadmap 1.3). Заменяет голый `i64`, который возвращала команда раньше.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExtractResult {
+    pub total: i64,
+    #[serde(default)]
+    pub skipped_files: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FontInfo {
     pub rel_path: String,
     pub name: String,
-    /// Коды покрываемых шрифтом скриптов: "latin","cyrillic","greek",
-    /// "japanese","chinese","korean","arabic","thai","hebrew".
+    /// Коды покрываемых шрифтом письменностей ("latin", "cyrillic", "greek",
+    /// "japanese", …). Полный перечень здесь не дублируем — источник истины:
+    /// probe-таблица определения покрытия в lib.rs.
     pub scripts: Vec<String>,
 }
 
@@ -98,6 +121,22 @@ pub struct DbEntry {
     /// Переопределение канала доставки: None/'auto' = по block_type, 'say'|'ui'|'both'.
     #[serde(default)]
     pub channel: Option<String>,
+
+    /// Ручная отметка «перевод подтверждён». Нужна для строк, где корректный перевод
+    /// совпадает с оригиналом (… , — , числа, имена) — иначе они вечно «непереведённые».
+    #[serde(default)]
+    pub confirmed: Option<bool>,
+
+    /// Способ извлечения строки: "ast" | "regex" (для манульных строк — None). Диагностика
+    /// надёжности: regex-извлечение грубее AST.
+    #[serde(default)]
+    pub source: Option<String>,
+
+    /// Альтернативные текстовые варианты (JSON-массив строк) для multi-key delivery.
+    /// Хранится как TEXT(JSON) в БД; фронт парсит для показа контекста, доставка — для
+    /// регистрации доп. ключей. None/пусто — обычная строка с одним ключом.
+    #[serde(default)]
+    pub alt_texts: Option<String>,
 }
 
 /// Отчёт о миграции перевода между версиями игры.

@@ -5,44 +5,59 @@
       <div
         v-for="p in translationPairs"
         :key="p.pair || 'legacy'"
-        class="pair-chip"
+        class="pair-card"
         :class="{ active: p.is_active }"
         :title="pairTitle(p)"
         @click="switchPair(p)"
       >
-        <span class="pair-name">
-          <template v-if="p.is_legacy">legacy</template>
-          <template v-else>{{ p.source || '?' }} <span class="pair-arrow">→</span> {{ p.target || '?' }}</template>
-        </span>
-        <span class="pair-prog">{{ p.translated }}/{{ p.total }}</span>
-        <span v-if="p.is_built && p.is_dirty" class="pair-dirty" :title="t('pair_dirty_hint')">●</span>
-        <span v-if="p.is_built" class="pair-export-wrap">
-          <button
-            class="pair-export"
-            :title="t('export_translation')"
-            @click.stop="toggleExportMenu(p)"
-          >{{ t('export_btn') }}</button>
-          <div v-if="exportMenuFor === (p.pair || 'legacy')" class="export-menu" @click.stop>
-            <button class="export-opt" @click="doExport(p, 'full')">
-              <span class="export-opt-title">{{ t('export_full') }}</span>
-              <span class="export-opt-hint">{{ t('export_full_hint') }}</span>
+        <div class="pc-head">
+          <span class="pc-name">
+            <template v-if="p.is_legacy">legacy</template>
+            <template v-else>{{ p.source || '?' }} <span class="pc-arrow">→</span> {{ p.target || '?' }}</template>
+          </span>
+          <span class="pc-status" :class="'st-' + statusKey(p)">{{ statusLabel(p) }}</span>
+        </div>
+
+        <div class="pc-bar"><div class="pc-bar-fill" :style="{ width: pct(p) + '%' }"></div></div>
+
+        <div class="pc-foot">
+          <span class="pc-prog">{{ p.translated }} / {{ p.total }} <span class="pc-pct">{{ pct(p) }}%</span></span>
+          <span class="pc-actions">
+            <span class="pc-export-wrap">
+              <button class="pc-act" :title="t('export_translation')" @click.stop="toggleExportMenu(p)">
+                <Icon name="download" :size="15" />
+              </button>
+              <div v-if="exportMenuFor === (p.pair || 'legacy')" class="export-menu" @click.stop>
+                <button class="export-opt" @click="doExportStrings(p)">
+                  <span class="export-opt-title">{{ t('export_strings') }}</span>
+                  <span class="export-opt-hint">{{ t('export_strings_hint') }}</span>
+                </button>
+                <template v-if="p.is_built">
+                  <button class="export-opt" @click="doExport(p, 'full')">
+                    <span class="export-opt-title">{{ t('export_full') }}</span>
+                    <span class="export-opt-hint">{{ t('export_full_hint') }}</span>
+                  </button>
+                  <button class="export-opt" @click="doExport(p, 'mod')">
+                    <span class="export-opt-title">{{ t('export_mod') }}</span>
+                    <span class="export-opt-hint">{{ t('export_mod_hint') }}</span>
+                  </button>
+                  <button class="export-opt export-opt-danger" @click="doRemove(p)">
+                    <span class="export-opt-title">{{ t('remove_mod') }}</span>
+                    <span class="export-opt-hint">{{ t('remove_mod_hint') }}</span>
+                  </button>
+                </template>
+              </div>
+            </span>
+            <button
+              v-if="!p.is_legacy"
+              class="pc-act pc-del"
+              :title="t('pairs_delete')"
+              @click.stop="deletePair(p)"
+            >
+              <Icon name="trash" :size="15" />
             </button>
-            <button class="export-opt" @click="doExport(p, 'mod')">
-              <span class="export-opt-title">{{ t('export_mod') }}</span>
-              <span class="export-opt-hint">{{ t('export_mod_hint') }}</span>
-            </button>
-            <button class="export-opt export-opt-danger" @click="doRemove(p)">
-              <span class="export-opt-title">{{ t('remove_mod') }}</span>
-              <span class="export-opt-hint">{{ t('remove_mod_hint') }}</span>
-            </button>
-          </div>
-        </span>
-        <button
-          v-if="!p.is_legacy"
-          class="pair-del"
-          :title="t('pairs_delete')"
-          @click.stop="deletePair(p)"
-        >×</button>
+          </span>
+        </div>
       </div>
     </div>
   </div>
@@ -51,8 +66,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import { translationPairs } from '../store.js';
-import { switchPair, deletePair, exportTranslation, removeMod } from '../actions.js';
+import { switchPair, deletePair, exportTranslation, removeMod, exportAllStrings } from '../actions.js';
 import { t } from '../locales.js';
+import Icon from './Icon.vue';
 
 const exportMenuFor = ref(null);
 
@@ -66,6 +82,13 @@ function doExport(p, mode) {
   exportTranslation(p, mode);
 }
 
+async function doExportStrings(p) {
+  exportMenuFor.value = null;
+  // Экспорт читает БД активной пары — переключаемся на выбранную, если нужно.
+  if (!p.is_active) await switchPair(p);
+  await exportAllStrings();
+}
+
 function doRemove(p) {
   exportMenuFor.value = null;
   removeMod(p);
@@ -75,17 +98,30 @@ function closeMenu() { exportMenuFor.value = null; }
 onMounted(() => document.addEventListener('click', closeMenu));
 onUnmounted(() => document.removeEventListener('click', closeMenu));
 
+function pct(p) {
+  return p.total > 0 ? Math.round((p.translated / p.total) * 100) : 0;
+}
+
+// Статус пары: черновик (не собрано) / собрано / изменено (собрано, но БД менялась).
+function statusKey(p) {
+  if (p.is_built && p.is_dirty) return 'dirty';
+  if (p.is_built) return 'built';
+  return 'draft';
+}
+function statusLabel(p) {
+  return t('pair_status_' + statusKey(p));
+}
+
 function pairTitle(p) {
   if (p.is_legacy) return t('pairs_legacy_hint');
-  const pct = p.total > 0 ? Math.round((p.translated / p.total) * 100) : 0;
-  return `${p.source} → ${p.target} — ${p.translated}/${p.total} (${pct}%)`;
+  return `${p.source} → ${p.target} — ${p.translated}/${p.total} (${pct(p)}%)`;
 }
 </script>
 
 <style scoped>
 .pairs-widget {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   margin-bottom: 12px;
   flex-wrap: wrap;
@@ -94,75 +130,120 @@ function pairTitle(p) {
   font-size: 12px;
   color: var(--text-secondary, #888);
   white-space: nowrap;
+  margin-top: 8px;
 }
 .pairs-list {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
 }
-.pair-chip {
-  display: inline-flex;
-  align-items: center;
+
+.pair-card {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  padding: 4px 10px;
-  border-radius: 14px;
+  width: 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--border-input);
   cursor: pointer;
-  font-size: 12px;
-  transition: border-color .15s, background .15s;
-  max-width: 260px;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.pair-chip:hover { border-color: var(--accent, #4ea1d3); }
-.pair-chip.active {
+.pair-card:hover { border-color: var(--accent, #4ea1d3); }
+.pair-card.active {
   border-color: var(--accent, #4ea1d3);
-  background: color-mix(in srgb, var(--accent, #4ea1d3) 18%, transparent);
+  background: color-mix(in srgb, var(--accent, #4ea1d3) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #4ea1d3) 40%, transparent) inset;
 }
-.pair-name {
+
+.pc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pc-name {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-weight: 600;
+  font-size: 13px;
+  color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pair-arrow { color: var(--accent, #4ea1d3); }
-.pair-prog {
+.pc-arrow { color: var(--accent, #4ea1d3); }
+
+.pc-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.st-draft { color: var(--text-secondary, #888); background: color-mix(in srgb, var(--text-secondary, #888) 16%, transparent); }
+.st-built { color: #3fae6a; background: rgba(63, 174, 106, .15); }
+.st-dirty { color: #eab308; background: rgba(234, 179, 8, .16); }
+
+.pc-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary, #888) 22%, transparent);
+  overflow: hidden;
+}
+.pc-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #4ea1d3);
+  transition: width .3s ease;
+}
+
+.pc-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pc-prog {
+  font-size: 12px;
   color: var(--text-secondary, #888);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.pair-del {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary, #888);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 2px;
-  border-radius: 4px;
-}
-.pair-del:hover { color: #e05a5a; background: rgba(224,90,90,.12); }
+.pc-pct { color: var(--text-main); font-weight: 600; margin-left: 2px; }
 
-.pair-export-wrap { position: relative; display: inline-flex; }
-.pair-dirty { color: #eab308; font-size: 11px; line-height: 1; cursor: default; }
-.pair-export {
+.pc-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: .55;
+  transition: opacity .15s;
+}
+.pair-card:hover .pc-actions { opacity: 1; }
+
+.pc-export-wrap { position: relative; display: inline-flex; }
+.pc-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--border-input);
   background: transparent;
   color: var(--text-secondary, #aaa);
   cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 7px;
-  border-radius: 8px;
-  white-space: nowrap;
+  border-radius: 7px;
+  transition: color .15s, border-color .15s, background .15s;
 }
-.pair-export:hover {
-  color: var(--accent, #4ea1d3);
-  border-color: var(--accent, #4ea1d3);
-}
+.pc-act:hover { color: var(--accent, #4ea1d3); border-color: var(--accent, #4ea1d3); }
+.pc-del:hover { color: #e05a5a; border-color: #e05a5a; background: rgba(224, 90, 90, .12); }
+
 .export-menu {
   position: absolute;
   top: calc(100% + 6px);

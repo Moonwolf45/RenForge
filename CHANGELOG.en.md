@@ -2,6 +2,39 @@
 
 [Русский](CHANGELOG.md) · **English**
 
+## [1.3.0]
+
+### Added
+- **Translation QA:** a single indicator in the editor header (errors / to review / all clear) with jumps to problem lines, highlighting of errors and warnings, and quick-fix buttons — strip a "stuck" AI prefix (like `[ENGINE]:`), restore lost leading tags, auto-wrap long interface strings; plus fix-the-whole-file in one click.
+- **Manual "translation confirmed" mark** — for strings whose correct translation equals the original (`…`, names, numbers), so they no longer count as untranslated.
+- **Duplicate marking in the editor:** strings whose original occurs several times in the project get a count badge (duplicates share one translation — translate once). If duplicates end up with different translations, a conflict warning appears: only one variant reaches the game, so they should be unified.
+- **Duplicate text variants:** for games where the same line exists in different wordings (base text + `tl/english`), your translation is now delivered under all variants — translate once (all variants are shown in the editor). Fixes the "half the game in Russian, half in English" case.
+- **Extraction-method tag** (AST / regex) — shows how reliably a string was extracted.
+- **"Game files" modal:** an overview of all found files with their status (extracted / other language / not extracted) and opening of any source file — instead of hunting for a file in the OS explorer.
+- **Batch string export** to all formats at once (CSV, JSON, PO), one file per source, with correct names.
+- **Unified volume control** on the Audio tab that syncs all players.
+- **Orphan `.rpy` warning** (a `.rpy` without a compiled `.rpyc`) with advice to run the game once and re-extract for an accurate result.
+- **Coverage diagnostics (for testing):** the mod build can be switched to diagnostic mode — the built translation then logs text that appeared in-game but isn't covered by the translation. The "Uncovered text" report lists such strings, cross-referenced against the database (seen in-game but not extracted = candidates), and lets you add any of them to manual strings in one click. Helps find extraction and delivery gaps.
+- **Multi-language collision warning:** if the target language matches a language the game already ships, the dashboard shows a warning — your translation may overlap the game's built-in localization (if the player selects that language in the game's menu). Helps avoid picking a conflicting target language by mistake.
+
+### Changed
+- **Redesigned language-pair cards:** clear status (draft / built / modified), progress and actions.
+- Single-file string export now fills in the correct file name (e.g. `script.rpy.po`).
+- More noticeable color indication of string status in the editor list.
+- Statuses and indicators update more accurately after saving.
+- **Image viewer:** the harsh transparency checkerboard was replaced with a soft theme-aware one; added a backdrop switch (checker / dark / light) to inspect transparent PNGs.
+- **Carried-over and memory-filled translations now reach the game right away** (previously they waited for a manual "reviewed" mark): the built mod delivers them and flags "needs review: N" in the build report — you can verify them in-game (Shift+R), and the yellow flag stays in the editor. The build report now shows how many strings were delivered (dialogue / UI), how many need review, and how many unsafe ones were skipped.
+
+### Fixed
+- **Steam achievements are no longer blocked by the mod:** removed forced developer/console mode from the delivery patch.
+- **Source viewer** no longer crashes with an encoding error on old games (Ren'Py 6.x).
+- Precise scrolling and highlighting of the target line when navigating from search or the list (it could previously miss).
+- RenForge's own files (patch and translations) no longer appear in the game's source-file list.
+- Header tab buttons (Text / Images / Audio) are now truly centered at any window width (they used to drift right on wide screens).
+- **Extraction resilience:** a parse failure on one problem file no longer aborts the whole extraction — that file is skipped (logged) and the remaining strings are extracted as usual.
+- **Files skipped during extraction are now visible in the UI:** if a game file couldn't be parsed, a warning listing those files appears after extraction — previously this was only visible in the technical log.
+- **Translation file robustness:** Unicode line-separator characters (U+2028/U+2029) in the text can no longer corrupt the delivery-file build — they are now escaped (no effect on the in-game result).
+
 ## [1.2.0]
 
 ### Added

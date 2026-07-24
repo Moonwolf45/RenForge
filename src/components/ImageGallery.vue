@@ -78,7 +78,7 @@
               <div
                   ref="viewportRef"
                   class="lightbox-viewport"
-                  :class="{ grabbing: isDragging }"
+                  :class="[{ grabbing: isDragging }, 'bg-' + lightboxBg]"
                   @wheel="onWheel"
                   @mousedown="onDragStart"
               >
@@ -97,6 +97,11 @@
                       <button class="lb-zoom-btn" @click="setZoom(zoom * 1.25)" :title="t('zoom_in')">+</button>
                       <span class="lb-zoom-pct">{{ Math.round(zoom * 100) }}%</span>
                       <button class="lb-zoom-btn lb-fit" @click="fitToViewport" :title="t('fit')">⤢</button>
+                  </div>
+                  <div class="lightbox-bg-ctrl" :title="t('bg_label')">
+                      <button v-for="m in ['checker','dark','light']" :key="m"
+                              class="lb-bg-btn" :class="['sw-' + m, { active: lightboxBg === m }]"
+                              @click="lightboxBg = m" :title="t('bg_' + m)" :aria-label="t('bg_' + m)"></button>
                   </div>
                   <div v-if="lightboxImg.is_translated" class="lightbox-toggle">
                       <button :class="{ active: lightboxShowOriginal }" @click="lightboxShowOriginal = true">{{ t('view_original') }}</button>
@@ -125,6 +130,11 @@ const gallerySelectedFolder = ref('');
 const galleryCurrentPage = ref(1);
 const galleryItemsPerPage = 100;
 const isGalleryLoading = ref(false);
+
+// Подложка лайтбокса для оценки прозрачности PNG: 'checker' (мягкая тематическая шахматка)
+// | 'dark' | 'light'. Хранится в localStorage.
+const lightboxBg = ref(localStorage.getItem('renforge_lightbox_bg') || 'checker');
+watch(lightboxBg, (v) => localStorage.setItem('renforge_lightbox_bg', v));
 
 // --- Drag&drop файлов с рабочего стола/папки ---
 const dragOverPath = ref(null);
@@ -520,15 +530,42 @@ async function openImgFolder(path) {
     display: grid;
     align-content: safe center;
     justify-content: safe center;
-    /* шахматка для прозрачных PNG */
-    background-color: #2b2b2b;
+}
+/* Подложки для оценки прозрачности PNG (переключаются). */
+/* Мягкая тематическая шахматка: низкоконтрастная, адаптируется к теме (текст на базе). */
+.lightbox-viewport.bg-checker {
+    background-color: var(--bg-base, #1e1e1e);
     background-image:
-        linear-gradient(45deg, #3a3a3a 25%, transparent 25%),
-        linear-gradient(-45deg, #3a3a3a 25%, transparent 25%),
-        linear-gradient(45deg, transparent 75%, #3a3a3a 75%),
-        linear-gradient(-45deg, transparent 75%, #3a3a3a 75%);
-    background-size: 22px 22px;
-    background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+        linear-gradient(45deg, color-mix(in srgb, var(--text-main) 6%, transparent) 25%, transparent 25%),
+        linear-gradient(-45deg, color-mix(in srgb, var(--text-main) 6%, transparent) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--text-main) 6%, transparent) 75%),
+        linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--text-main) 6%, transparent) 75%);
+    background-size: 24px 24px;
+    background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+.lightbox-viewport.bg-dark { background-color: #171717; }
+.lightbox-viewport.bg-light { background-color: #dcdcdc; }
+
+/* Переключатель подложки в панели лайтбокса */
+.lightbox-bg-ctrl { display: flex; align-items: center; gap: 6px; }
+.lb-bg-btn {
+    width: 22px; height: 22px; padding: 0; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--border-input); background-clip: padding-box;
+    transition: transform 0.1s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lb-bg-btn:hover { transform: translateY(-1px); }
+.lb-bg-btn.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.lb-bg-btn.sw-dark { background: #171717; }
+.lb-bg-btn.sw-light { background: #dcdcdc; }
+.lb-bg-btn.sw-checker {
+    background-color: #171717;
+    background-image:
+        linear-gradient(45deg, #565656 25%, transparent 25%),
+        linear-gradient(-45deg, #565656 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #565656 75%),
+        linear-gradient(-45deg, transparent 75%, #565656 75%);
+    background-size: 10px 10px;
+    background-position: 0 0, 0 5px, 5px -5px, -5px 0;
 }
 .lightbox-viewport.grabbing { cursor: grabbing; }
 .lightbox-img {

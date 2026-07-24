@@ -59,10 +59,17 @@
                v-for="(block, index) in parsedBlocks" 
                :key="block.id" 
                :id="'block-' + block.id" 
-               :class="['status-' + getBlockStatus(block)]"
+               :class="['status-' + getBlockStatus(block), { 'row-flash': flashBlockId === block.id }]"
                v-show="blockVisible(block)">
             <div class="block-header">
-              <span class="block-id">#{{ index + 1 }}<span v-if="block.line_number"> · {{ t('line_num') }} {{ block.line_number }}</span> | ID: {{ block.id }}</span>
+              <div class="block-id-group">
+                <span class="block-id">#{{ index + 1 }}<span v-if="block.line_number"> · {{ t('line_num') }} {{ block.line_number }}</span> | ID: {{ block.id }}</span>
+                <span v-if="block.source" class="src-tag" :class="'src-' + block.source"
+                      :title="block.source === 'ast' ? t('src_ast_hint') : t('src_regex_hint')">{{ block.source === 'ast' ? 'AST' : 'Regex' }}</span>
+                <span v-if="dupInfo(block)" class="dup-badge" :class="{ 'dup-badge-conflict': dupInfo(block).variants > 1 }" :title="dupTitle(block)">
+                  <Icon name="copy" :size="11" />{{ dupInfo(block).count }}<template v-if="dupInfo(block).variants > 1">!</template>
+                </span>
+              </div>
               <div class="card-actions block-actions">
                 <select class="block-channel" :class="{ 'channel-set': block.channel }" :value="block.channel || 'auto'" @change="setChannel(block, $event.target.value)" :title="t('channel_hint')">
                   <option value="auto">{{ t('channel_auto') }}</option>
@@ -72,6 +79,7 @@
                 </select>
                 <button v-if="isManualString(block)" class="icon-text-btn" @click="manualEditTarget = block; showAddStringModal = true" :title="t('edit_string')"><Icon name="edit" :size="15" /></button>
                 <button v-if="isManualString(block)" class="icon-text-btn icon-danger" @click="deleteManualString(block)" :title="t('manual_delete')"><Icon name="trash" :size="15" /></button>
+                <button class="icon-text-btn" :class="{ 'confirm-on': block.confirmed }" @click="toggleConfirmed(block)" :title="block.confirmed ? t('confirm_off') : t('confirm_on')"><Icon name="check" :size="15" /></button>
                 <button class="icon-text-btn" @click="copyToClipboard(block)" :title="t('copy_original')"><Icon name="copy" :size="15" /></button>
                 <button class="icon-text-btn" @click="copyOriginal(block)" :title="t('copy_paste_original')"><Icon name="arrow-down" :size="15" /></button>
                 <button class="icon-text-btn" @click="clearTranslation(block)" :title="t('clear_field')"><Icon name="x" :size="15" /></button>
@@ -87,6 +95,19 @@
                 <span v-if="charMap[block.who.trim()]" class="char-raw">({{ block.who.trim() }})</span>
               </span>
               <span class="original-body" v-html="hl(block)"></span>
+            </div>
+
+            <!-- Альт-варианты (multi-key): иные формулировки того же текста в языке-источнике.
+                 Перевод один — доставится под всеми вариантами. Здесь только контекст. -->
+            <div v-if="altTexts(block).length" class="alt-variants" :title="t('alt_variant_hint')">
+              <span class="alt-variants-label">{{ t('alt_variant_label') }}:</span>
+              <span v-for="(a, ai) in altTexts(block)" :key="ai" class="alt-variant">{{ a }}</span>
+            </div>
+
+            <!-- Конфликт дубликатов (#3): один оригинал переведён по-разному → в игру уйдёт один -->
+            <div v-if="dupInfo(block) && dupInfo(block).variants > 1" class="dup-conflict-warn">
+              <Icon name="alert" :size="14" />
+              <span>{{ t('dup_conflict').replace('{n}', dupInfo(block).variants) }}</span>
             </div>
 
             <!-- Перенесено из прошлой версии: показываем прежний оригинал -->
@@ -118,18 +139,12 @@
                      @focus="focusedBlockId = block.id"
                      @blur="focusedBlockId = null"></textarea>
             </div>
-            <div class="tag-error" v-if="getMissingTags(block).length > 0">
-              <strong>{{ t('tag_error') }}</strong>
-              <span class="missing-tag" v-for="tag in getMissingTags(block)" :key="tag">{{ tag }}</span>
-            </div>
-            <div class="tag-error" v-if="getExtraInterps(block).length > 0">
-              <strong>{{ t('tag_error_extra') }}</strong>
-              <span class="missing-tag" v-for="tag in getExtraInterps(block)" :key="tag">{{ tag }}</span>
-            </div>
-            <div class="ui-length-warn" v-if="uiOverflowWarn(block)">
-              <Icon name="info" :size="14" />
-              <span>{{ t('ui_length_warn') }}</span>
-              <button class="btn btn-outline ui-wrap-btn" @click="wrapToFit(block)">{{ t('ui_wrap_fit') }}</button>
+            <div class="diagnostics" v-if="diagnose(block).length > 0">
+              <div class="diag" :class="'diag-' + d.severity" v-for="d in diagnose(block)" :key="d.id">
+                <strong>{{ t(d.msgKey) }}</strong>
+                <span class="missing-tag" v-for="(it, i) in d.items" :key="i">{{ it }}</span>
+                <button v-if="d.fixable" class="btn btn-outline diag-fix" @click="fix(block, d.id)">{{ t('diag_fix') }}</button>
+              </div>
             </div>
           </div>
         </main>
@@ -169,10 +184,12 @@
 import { ref, computed, nextTick, watch, onUnmounted } from 'vue';
 import { 
     isEditorLoading, parsedBlocks, hideTranslated, 
-    focusedBlockId, charMap, glossary, newTerm, editorDirty, showMsg, editorResizeTick,
+    focusedBlockId, charMap, dupMap, glossary, newTerm, editorDirty, showMsg, editorResizeTick,
+    flashBlockId, flashBlock,
     currentFilePath, MANUAL_FILE, showAddStringModal, manualEditTarget
 } from '../store.js';
-import { getBlockStatus, getMissingTags, getOriginalTags, getExtraInterps, isManualString, deleteManualString } from '../actions.js';
+import { getBlockStatus, getOriginalTags, isManualString, deleteManualString } from '../actions.js';
+import { diagnose, applyFix, clearDiagnostics } from '../diagnostics.js';
 import { t } from '../locales.js';
 import Icon from './Icon.vue';
 import EmptyState from './EmptyState.vue';
@@ -182,14 +199,39 @@ const glossaryOpen = ref(true);
 // Поиск по строкам файла (фильтрует и сайдбар, и основной список). Ищет по тексту
 // оригинала/перевода, ID строки и имени говорящего — без учёта регистра.
 const editorSearch = ref('');
+// Альт-варианты строки (multi-key): иные формулировки того же текста в языке-источнике
+// (напр. base + tl/english). alt_texts в БД — JSON-массив; парсим для показа контекста.
+function altTexts(block) {
+  const raw = block && block.alt_texts;
+  if (!raw) return [];
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; }
+  catch (e) { return []; }
+}
+// Инфо о дубликатах строки (из dupMap): {count, variants} или null.
+// count>1 — тот же оригинал есть ещё в проекте (перевод общий, доставится один вариант);
+// variants>1 — переведён по-разному → в игру уйдёт ОДИН вариант (изъян #3, конфликт).
+function dupInfo(block) {
+  const o = block && block.original;
+  return (o && dupMap.value[o]) || null;
+}
+function dupTitle(block) {
+  const d = dupInfo(block);
+  if (!d) return '';
+  return d.variants > 1
+    ? t('dup_conflict').replace('{n}', d.variants)
+    : t('dup_hint').replace('{n}', d.count);
+}
 // Переопределение канала доставки строки: 'auto' (по типу) | 'say' | 'ui' | 'both'.
 function setChannel(block, val) {
   block.channel = (val === 'auto') ? null : val;
   editorDirty.value = true;
 }
 function blockVisible(block) {
-  // фильтр «скрыть переведённые» (текущий редактируемый блок не прячем)
-  if (hideTranslated.value && getBlockStatus(block) === 'translated' && focusedBlockId.value !== block.id) return false;
+  // фильтр «скрыть переведённые» (текущий редактируемый блок не прячем; строки с любой
+  // диагностикой — предупреждение/ошибка — тоже не прячем, иначе их не видно и не достичь
+  // навигацией «Предупреждения», хотя значок в шапке горит).
+  if (hideTranslated.value && getBlockStatus(block) === 'translated'
+      && focusedBlockId.value !== block.id && diagnose(block).length === 0) return false;
   const q = editorSearch.value.trim().toLowerCase();
   if (q) {
     const hay = `${block.id}\n${block.original || ''}\n${block.translation || ''}\n${block.who || ''}`.toLowerCase();
@@ -243,7 +285,7 @@ function hl(block) {
   return v;
 }
 watch(glossary, () => hlCache.clear(), { deep: true });
-watch(parsedBlocks, () => hlCache.clear());
+watch(parsedBlocks, () => { hlCache.clear(); clearDiagnostics(); });
 
 // После пакетного перевода (AI/импорт заполняет многострочные переводы) подгоняем
 // высоту всех видимых textarea — иначе они остаются в одну строку до фокуса.
@@ -266,61 +308,28 @@ function resolveOutdated(block) {
   editorDirty.value = true;
 }
 
-// Предупреждение о длинных UI-переводах: на фиксированном легаси-UI текст без переноса
-// и заметно длиннее оригинала может разъехаться (Ren'Py не ужимает текст под область).
-// Мягкая некритичная пометка — НЕ блокирует сохранение. Только для UI-строк, без уже
-// проставленного переноса, не для совсем коротких подписей.
-function uiOverflowWarn(block) {
-  if (block.block_type !== 'ui') return false;
-  const o = (block.original || '').trim();
-  const tr = (block.translation || '').trim();
-  if (!tr || tr === o) return false;
-  if (tr.includes('\n')) return false; // перенос уже проставлен — переводчик управляет сам
-  if (o.length < 6) return false;       // короткие подписи (OK/Да/Меню) не трогаем
-  return tr.length > o.length * 1.3 && (tr.length - o.length) >= 4;
-}
-
-// Пиксельное измерение видимой ширины строки (теги {..} не видимы — отбрасываем; [var]
-// оставляем как есть). Один и тот же шрифт для оригинала и перевода → важна относительная
-// ширина, абсолютный кегль сокращается. Фоллбэк на число символов, если canvas недоступен.
-const _measureCtx = (() => {
-  try { return document.createElement('canvas').getContext('2d'); } catch (e) { return null; }
-})();
-function visibleWidth(line) {
-  const visible = (line || '').replace(/\{[^}]*\}/g, '');
-  if (!_measureCtx) return visible.length;
-  _measureCtx.font = '20px sans-serif';
-  return _measureCtx.measureText(visible).width;
-}
-
-// Ассист «Подогнать переносом»: жадно разбиваем перевод на строки в пределах БЮДЖЕТА =
-// макс. ширина строки ОРИГИНАЛА (он по замыслу автора вписан в элемент). Переносим только
-// по пробелам; теги/[var] не рвём (они внутри неделимых «слов»). Вставляем реальные \n —
-// доставка превратит их в перенос строки.
-function wrapToFit(block) {
-  const origLines = (block.original || '').replace(/\\n/g, '\n').split('\n');
-  let budget = 0;
-  for (const l of origLines) budget = Math.max(budget, visibleWidth(l));
-  if (budget <= 0) return;
-  const tr = (block.translation || '').replace(/\\n/g, '\n').replace(/\n/g, ' ').trim();
-  if (!tr) return;
-  const words = tr.split(/\s+/);
-  const lines = [];
-  let cur = '';
-  for (const wd of words) {
-    const cand = cur ? cur + ' ' + wd : wd;
-    if (cur && visibleWidth(cand) > budget) {
-      lines.push(cur);
-      cur = wd;
-    } else {
-      cur = cand;
-    }
+// Ручная отметка «перевод подтверждён» (для строк, где перевод совпадает с оригиналом).
+// Подтверждение пустой строки трактуем как «оригинал и есть перевод» — вписываем оригинал
+// (станет translation===original; при доставке такая пара пропускается как no-op).
+function toggleConfirmed(block) {
+  block.confirmed = !block.confirmed;
+  if (block.confirmed && !(block.translation && block.translation.trim()) && (block.original || '').trim()) {
+    block.translation = block.original;
+    editorResizeTick.value++;
+    nextTick(() => resize(document.getElementById('ta-' + block.id)));
   }
-  if (cur) lines.push(cur);
-  block.translation = lines.join('\n');
   editorDirty.value = true;
-  editorResizeTick.value++;
-  nextTick(() => resize(document.getElementById('ta-' + block.id)));
+}
+
+// Применить автофикс одной диагностики к блоку (кнопка «Исправить» у проблемы).
+function fix(block, ruleId) {
+  const res = applyFix(block, ruleId);
+  if (res != null && res !== block.translation) {
+    block.translation = res;
+    editorDirty.value = true;
+    editorResizeTick.value++;
+    nextTick(() => resize(document.getElementById('ta-' + block.id)));
+  }
 }
 
 // --- Навигация с клавиатуры ---
@@ -337,8 +346,16 @@ function nextIndex(from, untranslatedOnly) {
 function focusBlockByIndex(i) {
   if (i < 0 || i >= parsedBlocks.value.length) return;
   const b = parsedBlocks.value[i];
-  const el = document.getElementById('ta-' + b.id);
-  if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  // Ленивый авторост соседних полей во время скролла смещает цель — центрирование
+  // считалось по «сжатой» раскладке и промахивалось (прыжок на другую строку, верно
+  // только со второго раза). Перед навигацией доводим высоту всех видимых textarea до
+  // финальной, чтобы оффсет цели был окончательным, и лишь затем центрируем.
+  document.querySelectorAll('.editor-panel .transparent-input').forEach(resize);
+  nextTick(() => {
+    const el = document.getElementById('ta-' + b.id);
+    if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ behavior: 'instant', block: 'center' }); }
+    flashBlock(b.id);
+  });
 }
 
 function onKeydown(e, index) {

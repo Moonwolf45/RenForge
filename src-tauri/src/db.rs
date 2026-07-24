@@ -66,7 +66,10 @@ pub fn get_db_conn(project_path: &str) -> Result<Connection, AppError> {
             status TEXT,
             prefix TEXT,
             prev_original TEXT,
-            channel TEXT
+            channel TEXT,
+            confirmed INTEGER,
+            source TEXT,
+            alt_texts TEXT
         )",
         [],
     )?;
@@ -88,6 +91,14 @@ pub fn get_db_conn(project_path: &str) -> Result<Connection, AppError> {
     let _ = conn.execute("ALTER TABLE translations ADD COLUMN prev_original TEXT", []);
     // Канал доставки (override): NULL/auto = по block_type, 'say'|'ui'|'both' = принудительно.
     let _ = conn.execute("ALTER TABLE translations ADD COLUMN channel TEXT", []);
+    // Ручная отметка «перевод подтверждён» (для строк, где перевод == оригиналу). Идемпотентно:
+    // повторная ошибка «duplicate column» игнорируется. ADD COLUMN — операция над метаданными,
+    // таблицу не переписывает, данные не трогает.
+    let _ = conn.execute("ALTER TABLE translations ADD COLUMN confirmed INTEGER", []);
+    // Способ извлечения строки ("ast"/"regex"). Идемпотентно (дубль-колонка игнорируется).
+    let _ = conn.execute("ALTER TABLE translations ADD COLUMN source TEXT", []);
+    // Альт-тексты (JSON-массив) для multi-key delivery. Идемпотентно.
+    let _ = conn.execute("ALTER TABLE translations ADD COLUMN alt_texts TEXT", []);
 
     // Индекс по file_path: открытие файла в редакторе (WHERE file_path = ?) и подсчёт
     // статистики (GROUP BY file_path) без него шли полным сканом таблицы — на больших
@@ -101,7 +112,7 @@ pub fn get_db_conn(project_path: &str) -> Result<Connection, AppError> {
 pub fn search_in_db(project_path: String, query: String) -> Result<Vec<DbEntry>, AppError> {
     let conn = get_db_conn(&project_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original 
+        "SELECT id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original, source 
          FROM translations 
          WHERE original LIKE ?1 OR translation LIKE ?1 LIMIT 100"
     )?;
@@ -119,6 +130,9 @@ pub fn search_in_db(project_path: String, query: String) -> Result<Vec<DbEntry>,
             prefix: row.get(8)?,
             prev_original: row.get(9)?,
             channel: None,
+            confirmed: None,
+            source: row.get(10)?,
+            alt_texts: None,
         })
     })?;
 
@@ -159,8 +173,8 @@ pub fn upsert_translations_batch(project_path: String, entries: Vec<DbEntry>) ->
     let tx = conn.transaction()?;
     {
         let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO translations (id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original, channel)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+            "INSERT OR REPLACE INTO translations (id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original, channel, confirmed, source, alt_texts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
         )?;
 
         // Дедупликация: собираем пары (original → translation) для распространения
@@ -169,7 +183,7 @@ pub fn upsert_translations_batch(project_path: String, entries: Vec<DbEntry>) ->
         for entry in &entries {
             stmt.execute(params![
                 entry.id, entry.block_type, entry.file_path, entry.line_number, 
-                entry.who, entry.original, entry.translation, entry.status, entry.prefix, entry.prev_original, entry.channel
+                entry.who, entry.original, entry.translation, entry.status, entry.prefix, entry.prev_original, entry.channel, entry.confirmed, entry.source, entry.alt_texts
             ])?;
             
             // Если строка переведена, запоминаем для дедупликации
@@ -219,7 +233,7 @@ pub fn delete_translations(project_path: String, ids: Vec<String>) -> Result<(),
 pub fn get_translations_for_file(project_path: String, file_path: String) -> Result<Vec<DbEntry>, AppError> {
     let conn = get_db_conn(&project_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original, channel 
+        "SELECT id, block_type, file_path, line_number, who, original, translation, status, prefix, prev_original, channel, confirmed, source, alt_texts 
          FROM translations WHERE file_path = ?1 ORDER BY line_number ASC"
     )?;
 
@@ -236,6 +250,9 @@ pub fn get_translations_for_file(project_path: String, file_path: String) -> Res
             prefix: row.get(8)?,
             prev_original: row.get(9)?,
             channel: row.get(10)?,
+            confirmed: row.get(11)?,
+            source: row.get(12)?,
+            alt_texts: row.get(13)?,
         })
     })?;
 
@@ -246,6 +263,40 @@ pub fn get_translations_for_file(project_path: String, file_path: String) -> Res
     Ok(results)
 }
 
+
+/// Статистика дубликатов одного оригинала (для пометки строк в редакторе).
+#[derive(Serialize)]
+pub struct DupStat {
+    pub count: i64,     // сколько строк проекта имеют ЭТОТ оригинал (>1 = есть дублёры)
+    pub variants: i64,  // сколько среди них РАЗНЫХ непустых переводов (>1 = конфликт доставки)
+}
+
+/// Карта дубликатов: `original -> {count, variants}` для оригиналов, встречающихся >1 раза.
+/// Доставка дедуплицирует по тексту (`build_runtime_rpy`), поэтому у дублей перевод общий;
+/// если непустых переводов несколько (variants>1) — в игру попадёт лишь ОДИН (это изъян #3).
+/// Редактор этим помечает строки. Один `GROUP BY`; только дубли (`HAVING cnt>1`), чтобы не
+/// тащить всю таблицу.
+#[tauri::command]
+pub fn get_duplicate_originals(project_path: String) -> Result<HashMap<String, DupStat>, AppError> {
+    let conn = get_db_conn(&project_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT original, COUNT(*) AS cnt,
+                COUNT(DISTINCT CASE WHEN translation IS NOT NULL AND translation != '' THEN translation END) AS variants
+         FROM translations
+         WHERE original IS NOT NULL AND original != ''
+         GROUP BY original
+         HAVING cnt > 1"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, DupStat { count: row.get(1)?, variants: row.get(2)? }))
+    })?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (orig, stat) = row?;
+        map.insert(orig, stat);
+    }
+    Ok(map)
+}
 
 #[tauri::command]
 pub fn get_project_languages(project_path: String) -> Result<Vec<String>, AppError> {

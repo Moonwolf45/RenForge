@@ -482,8 +482,12 @@ CLASS_FACTORY = magic.FakeClassFactory(SPECIAL_CLASSES, magic.FakeStrict)
 
 
 def pickle_safe_loads(buffer: bytes):
+    # latin-1 вместо ASCII/strict: старые игры (Ren'Py 6.x, Python2-пиклы) держат не-ASCII
+    # байты в коротких binstring (имена/ключи), и ASCII-декодер падает (UnicodeDecodeError).
+    # latin-1 декодирует любой байт 1:1 без потерь — так же, как наш основной загрузчик
+    # (unpickler.py: encoding='latin1'). Юникод-текст (BINUNICODE/UTF-8) это не затрагивает.
     return magic.safe_loads(
-        buffer, CLASS_FACTORY, {"collections"}, encoding="ASCII", errors="strict")
+        buffer, CLASS_FACTORY, {"collections"}, encoding="latin-1", errors="strict")
 
 
 def pickle_safe_dumps(buffer: bytes):

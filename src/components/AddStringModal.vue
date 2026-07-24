@@ -68,7 +68,7 @@
 
 <script setup>
 import { ref, computed, nextTick } from 'vue';
-import { showAddStringModal, editorResizeTick, currentFilePath, MANUAL_FILE, getFileName, manualEditTarget } from '../store.js';
+import { showAddStringModal, editorResizeTick, currentFilePath, MANUAL_FILE, getFileName, manualEditTarget, scrollToBlock } from '../store.js';
 import { addManualString, updateManualString } from '../actions.js';
 import { t } from '../locales.js';
 import Icon from './Icon.vue';
@@ -108,8 +108,7 @@ async function submit() {
   editorResizeTick.value++;
   await nextTick();
   if (origEl.value) origEl.value.focus();
-  const el = document.getElementById('block-' + id);
-  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  scrollToBlock(id);
 }
 
 function close() {
