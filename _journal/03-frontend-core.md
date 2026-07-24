@@ -73,7 +73,10 @@
   switchPair/deletePair/prepareProject/saveFile/addManualString/deleteManualString/tmFill/removeMod.
 - **`switchPair`/`deletePair`** — legacy→use_legacy_db; обычная→set_active_pair (+source/
   target). deletePair: ask, legacy нельзя.
-- **`prepareProject()`** — конвейер: (1) гейт обоих языков (страховка от контаминации);
+- **`prepareProject()`** — extract_and_ingest_project теперь возвращает `{total, skipped_files}`
+  (roadmap 1.3, было — голый total): успех-тост по `total`, и при непустом `skipped_files` —
+  доп. `warn`-тост со списком (первые 5 + «…», локаль `msg_extractor_skipped`). Конвейер:
+  (1) гейт обоих языков (страховка от контаминации);
   (2) prepare_writable + is_path_writable ДО записи (read-only/UAC иначе молча теряет
   файлы); (3) распаковка .rpa с липким прогрессом, затем повторный discover_source_languages;
   (4) защита source===target (ask); (5) extract_and_ingest_project. Локализует коды ошибок

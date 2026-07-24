@@ -20,7 +20,10 @@
 - **`process_directory(input_dir, output_file, source_lang)`** — оркестратор извлечения:
   собирает файлы, гоняет AST или regex-фоллбэк, добавляет движковые common-строки, пишет JSON
   с метаданными (project_name/is_legacy_format/available_languages/source_language/game_name/
-  game_version/engine_version/strings).
+  game_version/engine_version/strings/**skipped_files**). `skipped_files` (roadmap 1.3) — пути
+  относительно `input_dir` файлов, которые не удалось разобрать: и сбой `explore_ast` (Exception
+  на узле), и пустой `load_ast` (падало молча, теперь тоже считается). Прокидывается в
+  `ExtractedData` (Rust) → `ExtractResult` команды `extract_and_ingest_project` → тост на фронте.
 - **`detect_engine_version(input_dir)`** — версия движка Ren'Py из `<root>/renpy/vc_version.py`
   (фоллбэк `renpy/__init__.py`), регексп `version = "X.Y.Z"`.
 - **Мета игры (`GAME_META` + `capture_game_meta`, в unpickler.py):** имя/версия собираются из
@@ -96,7 +99,12 @@
 Дублей нет. Подозрение было артефактом наблюдения сабагента (explore_ast рекурсивна и
 вызывается во множестве мест — вызовы приняли за определения). Пункт закрыт.
 
-### Мёртвый код (реальные кандидаты на чистку)
+### Мёртвый код — УДАЛЁН
+- `extract_targeted_use_args` (была «ФИКС №3», unpickler.py) — не вызывалась нигде, вытеснена
+  инлайновой обработкой `SLUse` в `explore_ast`.
+- Лишний импорт `clean_filename` в `main.py` — удалён (нужен только внутри `unpickler.py`).
+
+### Старое (для истории, уже неактуально)
 - **`extract_targeted_use_args(expr)` (помечена «ФИКС №3», unpickler.py ~496)** — определена,
   но НИГДЕ не вызывается. Вытеснена инлайновой обработкой `SLUse` в `explore_ast`
   (через `extract_python_strings` + `extract_implicit_string`). Безопасно удалить.
