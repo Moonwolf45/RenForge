@@ -411,8 +411,8 @@ function hashStr(s) {
 // при toCurrentFile=true кладётся в текущий открытый файл с якорем lineNumber (для контекста).
 // type: 'dialogue' | 'ui'. Возвращает id блока (для прокрутки к нему).
 export async function addManualString(original, translation, type, toCurrentFile, lineNumber) {
-  const orig = (original || '').trim();
-  if (!orig) return null;
+  const orig = original || '';
+  if (!orig.trim()) return null;
   const blockType = type === 'dialogue' ? 'dialogue' : 'ui';
   const id = 'manual_' + hashStr(blockType + '\u0000' + orig);
   const tr = (translation || '').trim();
@@ -465,7 +465,7 @@ export function isManualString(block) {
 // просто ключ строки в БД (доставка матчит по тексту), смена original его не требует.
 export function updateManualString(block, original, translation, type) {
   if (!block) return;
-  const orig = (original || '').trim();
+  const orig = original || '';
   if (!orig) return;
   const blockType = type === 'dialogue' ? 'dialogue' : 'ui';
   block.block_type = blockType;
@@ -697,4 +697,80 @@ export async function importPO() {
         if (updatedCount > 0) editorDirty.value = true;
         showMsg('success', `${t('msg_po_imported')} ${updatedCount}.`);
     } catch (e) { showMsg('error', `Error: ${e}`); }
+}
+
+function collectManualImportItems(value) {
+    if (Array.isArray(value)) return value;
+
+    if (value && typeof value === 'object') {
+        if (Array.isArray(value.items)) return value.items;
+        if (Array.isArray(value.strings)) return value.strings;
+        if (Array.isArray(value.entries)) return value.entries;
+        if (Array.isArray(value.data)) return value.data;
+    }
+
+    return [];
+}
+
+// Импорт ручных строк из JSON.
+// Берёт только объекты с непустым original.
+// translation добавляется только если она есть и не пустая.
+// Значения НЕ trim'ятся при сохранении, чтобы не терять пробелы в начале/конце.
+export async function importManualStringsJSON() {
+    try {
+        isProcessing.value = true;
+
+        const selected = await open({
+            multiple: false,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+
+        if (!selected) return;
+
+        const jsonContent = await invoke('read_text_file', { path: selected });
+        const data = JSON.parse(jsonContent);
+        const items = collectManualImportItems(data);
+
+        if (!items.length) {
+            showMsg('error', 'В JSON не найден массив строк для импорта.');
+            return;
+        }
+
+        let added = 0;
+        let skipped = 0;
+        let lastId = null;
+        const toCurrent = !!currentFilePath.value && currentFilePath.value !== MANUAL_FILE;
+
+        for (const item of items) {
+            if (!item || typeof item !== 'object') {
+                skipped++;
+                continue;
+            }
+
+            const original = item.original == null ? '' : String(item.original);
+            if (!original.trim()) {
+                skipped++;
+                continue;
+            }
+
+            const translationRaw = item.translation == null ? '' : String(item.translation);
+            const translation = translationRaw.trim() ? translationRaw : '';
+
+            const id = await addManualString(original, translation, 'dialogue', toCurrent, 0);
+            if (id) {
+                added++;
+                lastId = id;
+            } else {
+                skipped++;
+            }
+        }
+
+        showMsg('success', `Импортировано строк: ${added}. Пропущено: ${skipped}.`);
+
+        return { added, skipped, lastId };
+    } catch (e) {
+        showMsg('error', `Ошибка импорта JSON: ${e}`);
+    } finally {
+        isProcessing.value = false;
+    }
 }

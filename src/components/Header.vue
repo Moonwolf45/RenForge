@@ -155,7 +155,13 @@
           </div>
         </div>
         
-        <button v-if="!isEditorLoading" class="btn btn-secondary header-add-string" style="display:inline-flex; align-items:center; justify-content:center;" @click="showAddStringModal = true" :title="t('add_string')"><Icon name="plus" :size="18" /></button>
+        <button v-if="!isEditorLoading" class="btn btn-secondary header-add-string" style="display:inline-flex; align-items:center; justify-content:center;" @click="showAddStringModal = true" :title="t('add_string')">
+          <Icon name="plus" :size="18" />
+        </button>
+
+        <button v-if="!isEditorLoading" class="btn btn-secondary header-add-string" style="display:inline-flex; align-items:center; justify-content:center;" @click="importManualStringsFromJSON" :title="t('add_string_import_json')">
+          <Icon name="database_plus" :size="18" />
+        </button>
 
         <div class="popover-wrapper" v-if="!isEditorLoading">
           <button class="btn btn-secondary" style="display:inline-flex; align-items:center; justify-content:center;" @click="togglePopover('settings')" :class="{active: activePopover === 'settings'}" :title="t('settings')"><Icon name="gear" :size="18" /></button>
@@ -171,7 +177,7 @@
             <div class="setting-row">
                 <label>{{ t('ui_accent') }}</label>
                 <AccentPicker />
-            </div>
+            </div>Импорт строк из JSON
             <div class="setting-row">
                 <label>{{ t('ui_lang') }}</label>
                 <select class="settings-select" v-model="uiLang" @change="saveSettings">
@@ -234,7 +240,10 @@ import {
   projectPath, hiddenFiles, isProcessing, loadProjectSettings, getFileName, showMsg, showHidden,
   availableLanguages, editorDirty, lastSavedAt, uiAccent, FUNNY_PROMPTS, scrollToBlock, editorResizeTick
 } from '../store.js';
-import { refreshProject, exportCSV, exportJSON, importCSV, importJSON, exportPO, importPO, saveFile, getBlockStatus } from '../actions.js';
+import {
+  refreshProject, exportCSV, exportJSON, importCSV, importJSON, exportPO, importPO, saveFile, getBlockStatus,
+  importManualStringsJSON
+} from '../actions.js';
 import { fixFile, hasBulkFixables, diagnose } from '../diagnostics.js';
 
 const predefinedLangs =['russian', 'english', 'spanish', 'french', 'german'];
@@ -363,5 +372,13 @@ function jumpToNextReview() {
     const b = blocks[reviewIdx];
     reviewIdx++;
     scrollToBlock(b.id);
+}
+
+async function importManualStringsFromJSON() {
+  const result = await importManualStringsJSON();
+  if (!result || result.added <= 0) return;
+
+  editorResizeTick.value++;
+  if (result.lastId) scrollToBlock(result.lastId);
 }
 </script>
